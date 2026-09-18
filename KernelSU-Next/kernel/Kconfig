@@ -1,0 +1,115 @@
+menu "KernelSU"
+
+config KSU
+	tristate "KernelSU function support"
+	default y
+	help
+	  Enable kernel-level root privileges on Android System.
+	  Requires CONFIG_KPROBES for kernel hooking support.
+	  To compile as a module, choose M here: the
+	  module will be called kernelsu.
+
+config KSU_DEBUG
+	bool "KernelSU debug mode"
+	depends on KSU
+	default n
+	help
+	  Enable KernelSU debug mode.
+
+config KSU_DISABLE_MANAGER
+	bool "Disable KernelSU manager integration"
+	depends on KSU
+	default n
+	help
+	  Disable manager APK detection and manager-specific handling.
+	  Root will be used in place of manager-only functionality.
+
+config KSU_DISABLE_POLICY
+	bool "Disable KernelSU policy profiles"
+	depends on KSU
+	default n
+	help
+	  Disable per-app root/non-root profile customization.
+	  Escalation will always use the default full root profile, and
+	  non-root handling will follow the global umount policy only.
+
+config KSU_ALLOWLIST_WORKAROUND
+	bool "KernelSU allowlist workaround"
+	depends on KSU
+	default n
+	help
+	  Enable workaround for broken allowlist save
+
+# For easier extern ifdef handling
+config KSU_MANUAL_HOOK
+	bool "KernelSU manual hook mode."
+	depends on KSU && KSU != m
+	default y if !KPROBES
+	default n
+	help
+	  Enable manual hook support.
+
+config KSU_KPROBES_HOOK
+	bool "KernelSU tracepoint+kretprobe hook"
+	depends on KSU && !KSU_MANUAL_HOOK
+	depends on KRETPROBES && KPROBES && HAVE_SYSCALL_TRACEPOINTS
+	default y if KPROBES && KRETPROBES && HAVE_SYSCALL_TRACEPOINTS
+	default y if !KSU_MANUAL_HOOK
+	help
+	  Enable KPROBES, KRETPROBES and TRACEPOINT hook for KernelSU core.
+	  This should not be used on kernel below 5.10.
+
+# ---- SuSFS v2.2.0 (driver-agnostic kernel core) ----
+config KSU_SUSFS
+	bool "KernelSU addon - SuSFS"
+	depends on KSU
+	default y
+	help
+	  Enable SuSFS driver-agnostic kernel core (fs/susfs.c + VFS hooks).
+
+config KSU_SUSFS_SUS_PATH
+	bool "Enable to hide suspicious path"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_MOUNT
+	bool "Enable to hide suspicious mounts"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_KSTAT
+	bool "Enable to spoof suspicious kstat"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_MAP
+	bool "Enable to spoof suspicious proc maps"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_UNAME
+	bool "Enable to spoof uname"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_ENABLE_LOG
+	bool "Enable SuSFS logging to kmsg"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	bool "Enable to hide ksu/susfs symbols in /proc/kallsyms"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	bool "Enable to spoof /proc/cmdline or /proc/bootconfig"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_OPEN_REDIRECT
+	bool "Enable to redirect a path on open syscall"
+	depends on KSU_SUSFS
+	default y
+
+endmenu

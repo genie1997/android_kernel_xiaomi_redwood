@@ -41,6 +41,13 @@
 #include "objsec.h"
 #include "conditional.h"
 
+#ifdef CONFIG_KSU
+/* KernelSU userspace av-query hooks (defined in drivers/kernelsu). */
+extern bool ksu_mask_compute_av_for_caller(void);
+extern u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass);
+extern bool ksu_sid_is_ksu_added_type(u32 sid);
+#endif
+
 enum sel_inos {
 	SEL_ROOT_INO = 2,
 	SEL_LOAD,	/* load policy */
@@ -616,6 +623,22 @@ static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
 	if (length)
 		goto out;
 
+#ifdef CONFIG_KSU
+	/*
+	 * To an app-side caller, a context whose type we minted over the base
+	 * policy (ksu / ksu_file, or a module's zygisk_file; value >
+	 * genuine_ntypes) is reported as absent: return EINVAL just as a stock
+	 * device does for an unknown type. Trusted callers
+	 * (kernel/init/system_server/zygote/ksu, incl. the zygisk daemons) are NOT
+	 * masked, so real labeling keeps working. Enforcement never uses this
+	 * /context query path.
+	 */
+	if (ksu_mask_compute_av_for_caller() && ksu_sid_is_ksu_added_type(sid)) {
+		length = -EINVAL;
+		goto out;
+	}
+#endif
+
 	length = security_sid_to_context(state, sid, &canon, &len);
 	if (length)
 		goto out;
@@ -856,7 +879,36 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 	if (length)
 		goto out;
 
+#ifdef CONFIG_KSU
+	/*
+	 * An app-side caller referencing a type we minted over the base policy
+	 * (ksu/ksu_file/zygisk_file) is reported as absent. Stock rejects such a
+	 * query at str_to_sid with EINVAL; mirror that here so the /access path
+	 * does not confirm an added type via an allow query either (covers the
+	 * `untrusted_app -> ksu_file:file read` case = now reads EINVAL, matching
+	 * the base policy).
+	 */
+	if (ksu_mask_compute_av_for_caller() &&
+	    (ksu_sid_is_ksu_added_type(ssid) || ksu_sid_is_ksu_added_type(tsid))) {
+		length = -EINVAL;
+		goto out;
+	}
+#endif
+
 	security_compute_av_user(state, ssid, tsid, tclass, &avd);
+
+#ifdef CONFIG_KSU
+	/*
+	 * This userspace compute_av path is a SEPARATE entry point from in-kernel
+	 * enforcement (security_compute_av / avc_has_perm), so subtracting our
+	 * added ALLOW bits here makes app-side callers read the base-policy
+	 * decision, while root + zygisk keep working. Only bits we added over the
+	 * base policy are ever subtracted; trusted callers
+	 * (kernel/init/system_server/zygote/ksu) are not masked.
+	 */
+	if (ksu_mask_compute_av_for_caller())
+		avd.allowed &= ~ksu_compute_av_delta_bits(ssid, tsid, tclass);
+#endif
 
 	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
 			  "%x %x %x %x %u %x",

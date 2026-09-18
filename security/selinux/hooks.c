@@ -6455,6 +6455,12 @@ bad:
 	return error;
 }
 
+#ifdef CONFIG_KSU
+/* KernelSU userspace av-query hooks (defined in drivers/kernelsu). */
+extern bool ksu_mask_compute_av_for_caller(void);
+extern bool ksu_sid_is_ksu_added_type(u32 sid);
+#endif
+
 static int selinux_setprocattr(const char *name, void *value, size_t size)
 {
 	struct task_security_struct *tsec;
@@ -6526,6 +6532,23 @@ static int selinux_setprocattr(const char *name, void *value, size_t size)
 		if (error)
 			return error;
 	}
+
+#ifdef CONFIG_KSU
+	/*
+	 * An app-side caller writing a context whose type we minted over the base
+	 * policy (ksu / ksu_file, or a module's zygisk_file) to /proc/self/attr/*
+	 * is reported as absent. Stock returns EINVAL at security_context_to_sid
+	 * for an absent type; here the type EXISTS (kept minted so root works), so
+	 * without this the later transition check would return -EPERM ("type
+	 * exists") instead of the stock EINVAL. Return EINVAL for app-side callers
+	 * to match stock. No legit userspace sets its own context to a ksu-added
+	 * type via attr/* (KSU transitions creds in-kernel, not through here);
+	 * trusted callers (kernel/init/system_server/zygote/ksu) are never masked.
+	 */
+	if (sid && ksu_mask_compute_av_for_caller() &&
+	    ksu_sid_is_ksu_added_type(sid))
+		return -EINVAL;
+#endif
 
 	new = prepare_creds();
 	if (!new)

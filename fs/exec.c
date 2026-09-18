@@ -1933,6 +1933,16 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
+#ifdef CONFIG_KSU
+	/* KSU-Next manual hook: do_execveat_common is the single chokepoint for
+	 * all userspace exec. do_execve_file (fexecve, filename==NULL) bypasses
+	 * this site, which is what we want (handler derefs filename->name with no
+	 * NULL guard, only IS_ERR). */
+	extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+				       void *argv, void *envp, int *flags);
+	if (likely(!IS_ERR(filename)))
+		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+#endif
 	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
 }
 
