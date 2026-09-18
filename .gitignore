@@ -161,3 +161,8 @@ arch/arm/boot/dts/vendor
 
 # build log
 log.txt
+
+# redwood build artifacts
+out*/
+*.bak
+*.orig

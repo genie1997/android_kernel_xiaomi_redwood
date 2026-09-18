@@ -18,7 +18,7 @@
 
 /* The minimum number of pages to free per reclaim */
 static unsigned short slmk_minfree __read_mostly = CONFIG_ANDROID_SIMPLE_LMK_MINFREE;
-module_param(slmk_minfree, short, 0644);
+module_param(slmk_minfree, short, 0);   /* not exposed under /sys/module */
 #define MIN_FREE_PAGES (slmk_minfree * SZ_1M / PAGE_SIZE)
 
 /* Kill up to this many victims per reclaim */
@@ -26,7 +26,7 @@ module_param(slmk_minfree, short, 0644);
 
 /* Timeout in jiffies for each reclaim */
 static unsigned short slmk_timeout __read_mostly = CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC;
-module_param(slmk_timeout, short, 0644);
+module_param(slmk_timeout, short, 0);   /* not exposed under /sys/module */
 #define RECLAIM_EXPIRES msecs_to_jiffies(slmk_timeout)
 
 struct victim_info {
@@ -467,7 +467,7 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 }
 
 static unsigned short slmk_vmpressure __read_mostly = 95;
-module_param(slmk_vmpressure, short, 0644);
+module_param(slmk_vmpressure, short, 0);   /* not exposed under /sys/module */
 
 static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
