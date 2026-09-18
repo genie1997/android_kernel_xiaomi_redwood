@@ -94,23 +94,13 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
     ksu_handle_umount(old_uid, new_uid);
 
 #ifdef CONFIG_KSU_SUSFS
-    // Mark non-root apps as "umounted" so the SuSFS per-app hiding layer
-    // (sus_path / sus_kstat / sus_map / open_redirect) actually applies to
-    // them. Every one of those features gates on
-    // susfs_is_current_proc_umounted_app() == (TIF_PROC_UMOUNTED && uid>=10000).
-    // Nothing else in the tree sets TIF_PROC_UMOUNTED, so without this the flag
-    // is never raised and the entire per-app SuSFS layer is inert (proven: all
-    // 9 module-registered sus_paths hid nothing). Mirrors upstream susfs4ksu,
-    // which sets it right after ksu_handle_umount(). The manager returned early
-    // above; we additionally skip root-allowed uids so genuine root apps keep
-    // full filesystem visibility — leaving exactly the non-su app processes
-    // (detectors included) to be fooled.
+    // sus_path/sus_kstat/sus_map/open_redirect all gate on TIF_PROC_UMOUNTED
+    // and nothing else sets it. Same spot as susfs4ksu. Allowed uids are
+    // skipped so root keeps normal fs visibility.
     if (!ksu_is_allow_uid_for_current(new_uid)) {
         susfs_set_current_proc_umounted();
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        // Re-flag any sus_path_loop entries for this freshly-spawned app
-        // (deferred to a workqueue to avoid blocking the setuid path). No-op
-        // when the loop list is empty. Matches upstream.
+        // re-flag sus_path_loop entries off the setuid path, no-op if empty
         schedule_work(&susfs_extra_works);
 #endif
     }

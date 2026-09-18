@@ -8,33 +8,18 @@
 #include "ksu.h"
 
 /*
- * Cached SID values for frequently checked contexts.
- * These are resolved once at init and used for fast u32 comparison
- * instead of expensive string operations on every check.
- *
- * A value of 0 means "no cached SID is available" for that context.
- * This covers both the initial "not yet cached" state and any case
- * where resolving the SID (e.g. via security_secctx_to_secid) failed.
- * In all such cases we intentionally fall back to the slower
- * string-based comparison path; this degrades performance only and
- * does not cause a functional failure.
+ * SIDs resolved once at init so the checks below are u32 compares instead of
+ * strcmp. 0 means it never resolved - fall back to the string compare.
  */
 static u32 cached_su_sid __read_mostly = 0;
 static u32 cached_zygote_sid __read_mostly = 0;
 static u32 cached_init_sid __read_mostly = 0;
 static u32 cached_system_server_sid __read_mostly = 0;
 /*
- * Manager Superuser hang: the servicemanager family are SELinux policy
- * ENFORCERS. They resolve service_manager:{find,add} for the CALLING domain
- * through the userspace query path (/sys/fs/selinux/access). When root (the
- * ksu domain) looks up a system service, servicemanager asks "can u:r:ksu:s0
- * find <svc>_service?". If we mask that answer (as we do for app-side
- * callers) the KSU-added `allow ksu *:* *` bit is subtracted, so servicemanager
- * sees ksu as having NO service_manager access and hides EVERY service from
- * root -> `am`/`pm`/`service`/`dumpsys` and libsu RootService all fail, and the
- * manager's Superuser tab spins forever. These callers MUST get the real
- * decision. They never relay it to an app (they only return a handle or "not
- * found"), so the app-side view is unaffected.
+ * servicemanager resolves service_manager:{find,add} for whoever is calling
+ * it through the userspace query path, so it has to see the real answer.
+ * Get this wrong and every service comes back as not found for root: am, pm,
+ * dumpsys and libsu RootService all fail and the manager just spins.
  */
 static u32 cached_servicemanager_sid __read_mostly = 0;
 static u32 cached_hwservicemanager_sid __read_mostly = 0;
@@ -168,11 +153,7 @@ static void __security_release_secctx(struct lsm_context *cp)
 #define __security_release_secctx security_release_secctx
 #endif
 
-/*
- * Initialize cached SID values for frequently checked SELinux contexts.
- * Called once after SELinux policy is loaded (post-fs-data).
- * This eliminates expensive string comparisons in hot paths.
- */
+/* Called once after the policy is loaded (post-fs-data). */
 
 void cache_sid(void)
 {
@@ -250,19 +231,10 @@ void cache_sid(void)
 }
 
 /*
- * Decide whether this caller of the userspace SELinux nodes
- * (/sys/fs/selinux/{context,access} + /proc/self/attr/current) should get
- * the base-policy answer. YES for every context EXCEPT the trusted system
- * contexts that may legitimately rely on a real userspace compute_av/label
- * result (kernel, init, system_server, zygote), our own root domain (ksu -
- * ksud/root tooling + the zygisk daemons, which run in the ksu domain), and
- * the servicemanager family. The servicemanager family are policy ENFORCERS
- * that DO use this path (via libselinux) to gate service_manager:{find,add}
- * for the calling domain; masking them subtracted the KSU-added
- * `allow ksu *:* *` bit and hid every service from root (manager hang).
- * app_zygote / isolated_app / untrusted_app / shell still get the
- * base-policy view. Exempting the enforcers is safe: they return a handle or
- * "not found" to the app, never the raw allow decision.
+ * The callers that have to keep seeing the real userspace compute_av/label
+ * answer: kernel, init, system_server, zygote, the ksu domain itself (ksud,
+ * root tooling and the zygisk daemons all run there), and servicemanager,
+ * which gates service_manager:{find,add} for other domains over this path.
  */
 bool ksu_mask_compute_av_for_caller(void)
 {
@@ -287,10 +259,7 @@ bool ksu_mask_compute_av_for_caller(void)
     return true;
 }
 
-/*
- * Fast path: compare task's SID directly against cached value.
- * Falls back to string comparison if cache is not initialized.
- */
+/* u32 compare against the cached SID, string compare if it never resolved. */
 static bool is_sid_match(const struct cred *cred, u32 cached_sid,
                          const char *fallback_context)
 {

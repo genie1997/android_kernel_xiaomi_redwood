@@ -17,22 +17,15 @@
 #define KSU_SUPPORT_ADD_TYPE
 
 //////////////////////////////////////////////////////
-// compute_av delta table (userspace av-query reconciliation)
+// allow-bit delta table
 //
-// Every ALLOW bit KSU/any module adds over the base ROM policy on a base
-// (src,tgt <= genuine_ntypes) key is recorded here, keyed by
-// (source_type, target_type, target_class). The userspace compute_av path
-// (/sys/fs/selinux/access -> security_compute_av_user) subtracts these bits
-// for app-side callers, so that path reports the base-policy answer
-// (execmem denied, etc.) while in-kernel enforcement
-// (avc_has_perm / security_compute_av) is UNTOUCHED -> root + zygisk keep
-// working. No rule/type name is hardcoded: whatever core-KSU or any module
-// (NeoZygisk/...) adds flows through the same add_rule_raw leaf. Keys can be
-// concrete types OR attributes (the lookup in rules.c expands attributes to
-// mirror compute_av's walk). Types WE minted (ksu/ksu_file, value >
-// genuine_ntypes) are NOT recorded here - they are the added-type surface,
-// handled separately (ksu_type_value_is_added). This is NEVER on the
-// enforcement path.
+// Records the allow bits added on a base (src,tgt <= genuine_ntypes) key,
+// keyed by (source, target, class). Nothing is hardcoded by name: rules go
+// through the same add_rule_raw leaf whether they come from core or from a
+// module, so both land here. Keys can be concrete types or attributes - the
+// lookup in rules.c expands attributes the way compute_av does. Types minted
+// past genuine_ntypes aren't recorded, they're tracked by value instead
+// (ksu_type_value_is_added).
 //////////////////////////////////////////////////////
 static struct avtab ksu_delta_avtab;
 bool ksu_avc_delta_ready = false;
@@ -72,11 +65,7 @@ static void ksu_avc_delta_add(u32 stype, u32 ttype, u16 tclass, u32 bits)
     avtab_insert_nonunique(&ksu_delta_avtab, &key, &d);
 }
 
-/* Is this type value one we ADDED over the base ROM policy? We keep the KSU
- * core types MINTED (root depends on them), so ksu/ksu_file plus module-minted
- * types (e.g. NeoZygisk's zygisk_file) all have value > genuine_ntypes. Used to
- * report them as absent to the app-side /context, /access and
- * /proc/self/attr/current query paths. */
+/* Types minted after the policy was loaded all land past genuine_ntypes. */
 bool ksu_type_value_is_added(u32 type_value)
 {
     return ksu_avc_delta_ready && type_value > ksu_avc_genuine_ntypes;
@@ -337,10 +326,8 @@ static void add_rule_raw(struct policydb *db, struct type_datum *src,
 
         struct avtab_node *node = get_avtab_node(db, &key, NULL);
         /*
-         * F3 (audit): get_avtab_node() returns NULL if the underlying
-         * avtab_insert_nonunique() hit -ENOMEM. Upstream dereferenced it
-         * unconditionally; guard it so an allocation failure during a policy
-         * edit degrades to "rule not added" instead of a NULL-deref oops.
+         * NULL here means avtab_insert_nonunique() hit -ENOMEM. Upstream
+         * dereferences it anyway; don't.
          */
         if (!node)
             return;
@@ -358,13 +345,10 @@ static void add_rule_raw(struct policydb *db, struct type_datum *src,
                 node->datum.u.data = ~0U;
         }
         /*
-         * Record every ALLOW bit we newly grant on a base (ROM)
-         * (src,tgt,class) key so the compute_av path can subtract it for
-         * app-side callers. Keys touching KSU-added types (value >
-         * genuine_ntypes, e.g. ksu/ksu_file/zygisk_file) are skipped here -
-         * they are the added-type surface, handled separately. src/tgt may
-         * be concrete types OR attributes (both recorded; the lookup expands
-         * attributes to mirror compute_av).
+         * Record the bits added on base keys. Keys touching a minted type
+         * are skipped, those are tracked by type value. src/tgt may be
+         * concrete types or attributes - record both, the lookup expands
+         * them later.
          */
         if (ksu_avc_delta_ready && !invert &&
             key.specified == AVTAB_ALLOWED &&

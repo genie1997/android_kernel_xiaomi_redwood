@@ -1403,7 +1403,7 @@ static int watch_one_dir(struct watch_dir *wd)
 }
 
 /*
- * fsnotify handler — runs inside an SRCU read section held by fsnotify().
+ * fsnotify handler, runs inside an SRCU read section held by fsnotify().
  * Must not block or call fsnotify_destroy_group() (which internally calls
  * synchronize_srcu on the same SRCU struct, causing a permanent deadlock).
  * Cleanup is deferred to a delayed_work that runs outside the SRCU context.

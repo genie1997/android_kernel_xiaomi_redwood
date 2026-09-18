@@ -64,19 +64,13 @@ static struct sidtab *ksu_get_sidtab(void)
 }
 
 /*
- * F1 (audit): the oracle-side delta/type lookups below run from selinuxfs
- * (sel_write_access / sel_write_context / selinux_setprocattr) AFTER the
- * enforcement path has already released the SELinux policy lock, yet they walk
- * the LIVE policydb / sidtab / type_attr_map_array. Take the SAME lock the
- * enforcement path uses so a concurrent in-place policy mutation
- * (apply_kernelsu_rules / handle_sepolicy under write_lock, or add_type()'s
- * kvrealloc-then-free of type_attr_map_array) cannot free structures under us.
- * All work done while holding it is non-sleeping (sidtab_search / ebitmap +
- * avtab walks), so a non-sleeping rwlock (pre-5.10) / rcu_read_lock (>=5.10,
- * RCU-swapped policy) is correct and cannot deadlock (the lock is not held on
- * entry here).
+ * The lookups below run from selinuxfs and walk the live policydb/sidtab
+ * after the enforcement path has dropped the policy lock. handle_sepolicy()
+ * can be mutating it at the same time (add_type() kvreallocs and frees
+ * type_attr_map_array), so take the same lock. Everything done under it is
+ * non-sleeping, and it is not already held on entry.
  */
-static inline void ksu_oracle_read_lock(void)
+static inline void ksu_policy_read_lock(void)
 {
 #ifdef SELINUX_POLICY_INSTEAD_SELINUX_SS
     rcu_read_lock();
@@ -85,7 +79,7 @@ static inline void ksu_oracle_read_lock(void)
 #endif
 }
 
-static inline void ksu_oracle_read_unlock(void)
+static inline void ksu_policy_read_unlock(void)
 {
 #ifdef SELINUX_POLICY_INSTEAD_SELINUX_SS
     rcu_read_unlock();
@@ -95,13 +89,9 @@ static inline void ksu_oracle_read_unlock(void)
 }
 
 /*
- * Bits to subtract from a security_compute_av_user() answer so the
- * /sys/fs/selinux/access node returns the base-policy decision for an app-side
- * caller. Mirrors compute_av's attribute walk: unions our recorded
- * ALLOW delta over (src type + its attributes) x (tgt type + its attributes),
- * so both concrete edges (system_server:execmem) AND attribute-based grants
- * are subtracted. Only bits WE added are ever in the delta, so the result is
- * exactly the stock answer. NEVER on the enforcement path.
+ * Bits to subtract from a security_compute_av_user() answer. Walks the
+ * attributes the same way compute_av does, so grants made through an
+ * attribute are covered as well as concrete edges.
  */
 u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass)
 {
@@ -115,7 +105,7 @@ u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass)
     if (!ksu_avc_delta_ready)
         return 0;
 
-    ksu_oracle_read_lock();
+    ksu_policy_read_lock();
 
     db = get_policydb();
     sidtab = ksu_get_sidtab();
@@ -141,17 +131,11 @@ u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass)
         }
     }
 out:
-    ksu_oracle_read_unlock();
+    ksu_policy_read_unlock();
     return bits;
 }
 
-/*
- * Does this SID resolve to a KSU/module-added type (value > genuine_ntypes,
- * i.e. ksu / ksu_file / a module's zygisk_file)? The /context and /access
- * validation nodes + selinux_setprocattr use this to return EINVAL for
- * app-side callers referencing an added type, matching how the base policy
- * answers for an unknown type. Never on the enforcement path.
- */
+/* Does this SID resolve to a type minted after the policy was loaded? */
 bool ksu_sid_is_ksu_added_type(u32 sid)
 {
     struct sidtab *sidtab;
@@ -161,7 +145,7 @@ bool ksu_sid_is_ksu_added_type(u32 sid)
     if (!ksu_avc_delta_ready)
         return false;
 
-    ksu_oracle_read_lock(); /* F1: guard sidtab lifetime */
+    ksu_policy_read_lock(); /* sidtab lifetime */
     sidtab = ksu_get_sidtab();
     if (!sidtab)
         goto out;
@@ -170,7 +154,7 @@ bool ksu_sid_is_ksu_added_type(u32 sid)
         goto out;
     ret = ksu_type_value_is_added(c->type);
 out:
-    ksu_oracle_read_unlock();
+    ksu_policy_read_unlock();
     return ret;
 }
 
@@ -184,18 +168,11 @@ extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
 static void reset_avc_cache()
 {
     /*
-     * Do NOT call selinux_status_update_policyload() here. It rewrites the
-     * mmap'd SELinux status page's policyload/sequence fields, which
-     * desynchronises the status-page generation from the /access path's
-     * avd.seqno (== latest_granting). We only ADD allow rules to the EXISTING
-     * policydb (no security_load_policy runs, so latest_granting is never
-     * advanced); flushing the kernel AVC with avc_ss_reset(0) is a pure cache
-     * flush that never advances the visible generation (avc_latest_notif_update
-     * only raises on seqno > latest_notif). Leaving the status page at its boot
-     * value keeps it byte-consistent with avd.seqno on a single-policy-load
-     * device. Enforcement is unaffected: adding an allow only turns a cached
-     * DENY into an ALLOW, and the flush drops that cached DENY so it is
-     * recomputed against the new policy.
+     * Don't call selinux_status_update_policyload() here. It bumps the mmap'd
+     * status page's sequence, which then no longer matches avd.seqno - we only
+     * add rules to the policydb that is already loaded, so latest_granting
+     * never moves. avc_ss_reset(0) is enough: it drops the cached denials so
+     * they get recomputed.
      */
 #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
 	LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
@@ -232,11 +209,8 @@ static int apply_kernelsu_rules_fn(void *ptr)
 {
 	struct policydb *db = (struct policydb *)ptr;
 
-    /* Arm the compute_av delta recorder with the base-policy type count BEFORE
-     * we mint any type or add any rule. ksu/ksu_file minted below get value >
-     * this and are handled as added types; all ALLOW bits we add on base
-     * (<= this) keys get recorded so the userspace compute_av node can
-     * subtract them. */
+    /* Has to run before anything is minted or added below - everything past
+     * this type count is ours. */
     ksu_avc_delta_init(db->p_types.nprim);
 
     ksu_type(db, KERNEL_SU_DOMAIN, "domain");
@@ -286,10 +260,6 @@ static int apply_kernelsu_rules_fn(void *ptr)
     ksu_allow(db, "init", "adb_data_file", "file", ALL);
     ksu_allow(db, "init", "adb_data_file", "dir", ALL); // #1289
     ksu_allow(db, "init", KERNEL_SU_DOMAIN, ALL, ALL);
-    // Dropped the `allow zygote adb_data_file:dir search` over-grant: the base
-    // policy lacks it, and module/overlay unmounting for app namespaces is
-    // handled by susfs TRY_UMOUNT + ksud, so zygote never needs to traverse
-    // /data/adb itself.
 
     // copied from Magisk rules
     // suRights

@@ -625,13 +625,8 @@ static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
 
 #ifdef CONFIG_KSU
 	/*
-	 * To an app-side caller, a context whose type we minted over the base
-	 * policy (ksu / ksu_file, or a module's zygisk_file; value >
-	 * genuine_ntypes) is reported as absent: return EINVAL just as a stock
-	 * device does for an unknown type. Trusted callers
-	 * (kernel/init/system_server/zygote/ksu, incl. the zygisk daemons) are NOT
-	 * masked, so real labeling keeps working. Enforcement never uses this
-	 * /context query path.
+	 * A type minted after the policy was loaded answers here the same way an
+	 * unknown type does. Trusted callers are exempt so labeling still works.
 	 */
 	if (ksu_mask_compute_av_for_caller() && ksu_sid_is_ksu_added_type(sid)) {
 		length = -EINVAL;
@@ -881,12 +876,8 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 
 #ifdef CONFIG_KSU
 	/*
-	 * An app-side caller referencing a type we minted over the base policy
-	 * (ksu/ksu_file/zygisk_file) is reported as absent. Stock rejects such a
-	 * query at str_to_sid with EINVAL; mirror that here so the /access path
-	 * does not confirm an added type via an allow query either (covers the
-	 * `untrusted_app -> ksu_file:file read` case = now reads EINVAL, matching
-	 * the base policy).
+	 * Same as the /context node above: an unknown type is rejected at
+	 * str_to_sid, so a minted one answers the same way here.
 	 */
 	if (ksu_mask_compute_av_for_caller() &&
 	    (ksu_sid_is_ksu_added_type(ssid) || ksu_sid_is_ksu_added_type(tsid))) {
@@ -898,14 +889,7 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 	security_compute_av_user(state, ssid, tsid, tclass, &avd);
 
 #ifdef CONFIG_KSU
-	/*
-	 * This userspace compute_av path is a SEPARATE entry point from in-kernel
-	 * enforcement (security_compute_av / avc_has_perm), so subtracting our
-	 * added ALLOW bits here makes app-side callers read the base-policy
-	 * decision, while root + zygisk keep working. Only bits we added over the
-	 * base policy are ever subtracted; trusted callers
-	 * (kernel/init/system_server/zygote/ksu) are not masked.
-	 */
+	/* Only bits added over the base policy are ever subtracted here. */
 	if (ksu_mask_compute_av_for_caller())
 		avd.allowed &= ~ksu_compute_av_delta_bits(ssid, tsid, tclass);
 #endif
