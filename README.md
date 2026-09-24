@@ -9,7 +9,7 @@ Linux 5.4.302. Built with Neutron Clang 24.
 
 - Scarlet v6.0 base, on 5.4.302
 - KernelSU-Next (root built in, no ramdisk patch needed)
-- SuSFS v2.2.0
+- SuSFS v2.3.0
 - Compiled with Neutron Clang 24 (LLVM 24)
 
 ## Build
