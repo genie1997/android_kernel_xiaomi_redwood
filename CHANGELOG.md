@@ -8,35 +8,39 @@ Linux 5.4.302, built on the Scarlet v6.0 base with Neutron Clang 24.
 | Codenames | `redwood`, `redwoodin` — the installer accepts both |
 | Defconfig | `vendor/xiaomi-qgki_defconfig` + `vendor/redwood.config` + `vendor/vajra.config` |
 | Root | KernelSU-Next, compiled in — manual hooks, no kprobes |
-| SuSFS | 2.2.0, compiled in |
+| SuSFS | 2.3.0, compiled in |
 
 ---
 
+## 2.0 — 24 September 2026
+
+- SuSFS is updated to 2.3.0 — a big chunk of it was reworked this release.
+- KernelSU-Next is updated. You'll need the KernelSU-Next 3.4.0 manager for this build; older
+  managers won't work with it. Grab it from the KernelSU-Next releases page.
+- Fixed a reboot that could panic the phone when you had modules installed.
+
 ## 1.0.2 — 19 September 2026
 
-Installer fixes only. The kernel is the one shipped in 1.0, unchanged.
+Installer fixes only, same kernel as 1.0.
 
-- Fix the installer failing with `Unable to determine  partition`. The AnyKernel3 variables were
-  written in lowercase, so it never resolved the boot partition.
-- Fix units reporting `redwoodin` being turned away at `Checking device...`.
-- `Vajra-1.0.zip` and `Vajra-1.0.1.zip` could not install on any device and have been removed. If you
-  have either of them, take this one instead.
+- Fix the installer not finding the boot partition (the AnyKernel3 vars were lowercase).
+- Fix `redwoodin` units being turned away at the device check.
+- Pulled the broken `Vajra-1.0.zip` / `1.0.1.zip` — use this one instead.
 
 ## 1.0 — 18 September 2026
 
 First release.
 
-- Replace the bundled KernelSU with KernelSU-Next, compiled into the kernel. Root works the moment you
-  flash — no ramdisk patching, no separate boot image.
-- Add SuSFS 2.2.0, compiled in: `sus_path`, `sus_mount`, `sus_kstat`, `sus_map`, `open_redirect`,
-  uname and cmdline spoofing, and symbol hiding. The SuSFS module is not needed for any of these.
+- KernelSU-Next compiled in — root the moment you flash, no ramdisk patch or separate boot image.
+- SuSFS 2.2.0 compiled in (sus_path, sus_mount, sus_kstat, sus_map, open_redirect, uname/cmdline
+  spoof, symbol hiding). The SuSFS module isn't needed.
 - Add the `redwood` and `vajra` config fragments.
 
 ---
 
 ## Flashing
 
-Franco Kernel Manager's built-in flasher, or `adb sideload Vajra-1.0.2.zip` from recovery.
+Franco Kernel Manager's built-in flasher, or `adb sideload Vajra-2.0.zip` from recovery.
 
 It is an AnyKernel3 zip, kernel-only: it replaces the Image and leaves your ROM's ramdisk alone, so it
 flashes on top of whatever redwood ROM you are already running. No wipe, no data loss.
