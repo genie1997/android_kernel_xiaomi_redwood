@@ -51,7 +51,8 @@
 #include <trace/events/namei.h>
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-extern bool susfs_is_inode_sus_path(struct inode *inode);
+/* susfs_is_inode_sus_path() is the gated inline from <linux/susfs_def.h>;
+ * only the fake qstr extern stays here. */
 extern const struct qstr susfs_fake_qstr_name;
 #endif
 

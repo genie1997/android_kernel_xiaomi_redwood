@@ -9,7 +9,7 @@
 #include <linux/susfs_def.h>
 #include <linux/statfs.h>
 
-#define SUSFS_VERSION "v2.2.0"
+#define SUSFS_VERSION "v2.3.0"
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
 #define SUSFS_VARIANT "NON-GKI"
 #else
@@ -236,8 +236,6 @@ void susfs_set_avc_log_spoofing(void __user **user_info);
 void susfs_get_enabled_features(void __user **user_info);
 void susfs_show_variant(void __user **user_info);
 void susfs_show_version(void __user **user_info);
-
-void susfs_start_sdcard_monitor_fn(void);
 
 /* susfs_init */
 void susfs_init(void);

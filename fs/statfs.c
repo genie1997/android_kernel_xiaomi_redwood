@@ -110,13 +110,16 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
 #endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (likely(susfs_is_current_proc_umounted() && path->mnt)) {
+	/* check the id first: only ksu-range mounts are hidden, and the walk below
+	 * takes the mount hash lock. */
+	if (path->mnt && real_mount(path->mnt)->mnt_id >= DEFAULT_KSU_MNT_ID &&
+		susfs_is_sus_mnt_hidden_from_current()) {
 		no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path->mnt);
 		if (path->mnt == no_sus_vfsmnt) {
 			dput(no_sus_vfsmnt->mnt_root);
 			mntput(no_sus_vfsmnt);
 			goto orig_flow;
-	}
+		}
 		error = statfs_by_dentry(no_sus_vfsmnt->mnt_root, buf);
 		if (!error)
 			buf->f_flags = calculate_f_flags(no_sus_vfsmnt);
