@@ -109,30 +109,14 @@ static int ksu_task_fix_setuid(struct cred *new, const struct cred *old,
 				    (uid_t)new_uid.val);
 }
 
-#ifndef DEVPTS_SUPER_MAGIC
-#define DEVPTS_SUPER_MAGIC	0x1cd1
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-int ksu_inode_permission(struct mnt_idmap *idmap, struct inode *inode, int mask)
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
-int ksu_inode_permission(struct user_namespace *mnt_userns, struct inode *inode, int mask)
-#else
-int ksu_inode_permission(struct inode *inode, int mask)
-#endif
-{
-	if (unlikely(inode && inode->i_sb && inode->i_sb->s_magic == DEVPTS_SUPER_MAGIC)) {
-		// __ksu_handle_devpts(inode);
-	}
-	return 0;
-}
+/* dropped: an inode_permission hook whose body is a commented-out call to
+ * a symbol we do not have. It only adds a hook-list step per check. */
 
 static struct security_hook_list ksu_hooks[] = {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) ||                           \
 	defined(CONFIG_IS_HW_HISI) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
 	LSM_HOOK_INIT(key_permission, ksu_key_permission),
 #endif
-	LSM_HOOK_INIT(inode_permission, ksu_inode_permission),
 	LSM_HOOK_INIT(inode_rename, ksu_inode_rename),
 	LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid)
 };

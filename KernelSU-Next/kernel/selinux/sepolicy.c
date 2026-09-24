@@ -16,17 +16,8 @@
 
 #define KSU_SUPPORT_ADD_TYPE
 
-//////////////////////////////////////////////////////
-// allow-bit delta table
-//
-// Records the allow bits added on a base (src,tgt <= genuine_ntypes) key,
-// keyed by (source, target, class). Nothing is hardcoded by name: rules go
-// through the same add_rule_raw leaf whether they come from core or from a
-// module, so both land here. Keys can be concrete types or attributes - the
-// lookup in rules.c expands attributes the way compute_av does. Types minted
-// past genuine_ntypes aren't recorded, they're tracked by value instead
-// (ksu_type_value_is_added).
-//////////////////////////////////////////////////////
+// record every allow bit we add over the base policy (added types are
+// handled separately, via ksu_type_value_is_added)
 static struct avtab ksu_delta_avtab;
 bool ksu_avc_delta_ready = false;
 static u32 ksu_avc_genuine_ntypes;
@@ -65,7 +56,11 @@ static void ksu_avc_delta_add(u32 stype, u32 ttype, u16 tclass, u32 bits)
     avtab_insert_nonunique(&ksu_delta_avtab, &key, &d);
 }
 
-/* Types minted after the policy was loaded all land past genuine_ntypes. */
+/* Is this type value one we ADDED over the base ROM policy? We keep the KSU
+ * core types MINTED (root depends on them), so ksu/ksu_file plus module-minted
+ * types (e.g. NeoZygisk's zygisk_file) all have value > genuine_ntypes. Used to
+ * report them as absent to the app-side /context, /access and
+ * /proc/self/attr/current query paths. */
 bool ksu_type_value_is_added(u32 type_value)
 {
     return ksu_avc_delta_ready && type_value > ksu_avc_genuine_ntypes;
@@ -326,8 +321,10 @@ static void add_rule_raw(struct policydb *db, struct type_datum *src,
 
         struct avtab_node *node = get_avtab_node(db, &key, NULL);
         /*
-         * NULL here means avtab_insert_nonunique() hit -ENOMEM. Upstream
-         * dereferences it anyway; don't.
+         * get_avtab_node() returns NULL if the underlying
+         * avtab_insert_nonunique() hit -ENOMEM. Upstream dereferenced it
+         * unconditionally; guard it so an allocation failure during a policy
+         * edit degrades to "rule not added" instead of a NULL-deref oops.
          */
         if (!node)
             return;
@@ -344,12 +341,8 @@ static void add_rule_raw(struct policydb *db, struct type_datum *src,
             else
                 node->datum.u.data = ~0U;
         }
-        /*
-         * Record the bits added on base keys. Keys touching a minted type
-         * are skipped, those are tracked by type value. src/tgt may be
-         * concrete types or attributes - record both, the lookup expands
-         * them later.
-         */
+        /* record every allow bit we add over the base policy so compute_av can
+         * subtract it for app-side callers; KSU-added types handled separately */
         if (ksu_avc_delta_ready && !invert &&
             key.specified == AVTAB_ALLOWED &&
             src->value && src->value <= ksu_avc_genuine_ntypes &&
@@ -616,6 +609,8 @@ static bool add_filename_trans(struct policydb *db, const char *s,
     }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+	struct filename_trans_key *new_key = NULL;
+	int rc;
 	struct filename_trans_key key;
 	key.ttype = tgt->value;
 	key.tclass = cls->value;
@@ -643,18 +638,42 @@ static bool add_filename_trans(struct policydb *db, const char *s,
     if (trans == NULL) {
         trans = (struct filename_trans_datum *)kcalloc(1, sizeof(*trans),
                                                        GFP_KERNEL);
-		struct filename_trans_key *new_key =
-			(struct filename_trans_key *)kzalloc(sizeof(*new_key), GFP_KERNEL);
-		*new_key = key;
-		new_key->name = kstrdup(key.name, GFP_KERNEL);
-		trans->next = last;
-		trans->otype = def->value;
-		hashtab_insert(&db->filename_trans, new_key, trans,
-                       filenametr_key_params);
-	}
+        if (!trans) {
+            pr_err("add_filename_trans: alloc filename_trans_datum failed\n");
+            goto out;
+        }
+        new_key = kzalloc(sizeof(*new_key), GFP_KERNEL);
+        if (!new_key) {
+            pr_err("add_filename_trans: alloc filename_trans_key failed\n");
+            goto free_trans;
+        }
+        *new_key = key;
+        new_key->name = kstrdup(key.name, GFP_KERNEL);
+        if (!new_key->name) {
+            pr_err("add_filename_trans: kstrdup name failed\n");
+            goto free_key;
+        }
+        trans->next = last;
+        trans->otype = def->value;
+        rc = hashtab_insert(&db->filename_trans, new_key, trans,
+                            filenametr_key_params);
+        if (rc) {
+            pr_err("add_filename_trans: hashtab_insert failed: %d\n", rc);
+            goto free_name;
+        }
+    }
 
-	db->compat_filename_trans_count++;
-	return ebitmap_set_bit(&trans->stypes, src->value - 1, 1) == 0;
+    db->compat_filename_trans_count++;
+    return ebitmap_set_bit(&trans->stypes, src->value - 1, 1) == 0;
+
+free_name:
+    kfree(new_key->name);
+free_key:
+    kfree(new_key);
+free_trans:
+    kfree(trans);
+out:
+    return false;
 #else // < 5.7.0, has no filename_trans_key, but struct filename_trans
 
 	struct filename_trans key;
@@ -675,12 +694,25 @@ static bool add_filename_trans(struct policydb *db, const char *s,
 			(struct filename_trans *)kzalloc(sizeof(*new_key), GFP_KERNEL);
 		if (!new_key) {
 			pr_err("add_filename_trans: Failed to alloc new_key\n");
+			kfree(trans);
 			return false;
 		}
 		*new_key = key;
 		new_key->name = kstrdup(key.name, GFP_KERNEL);
+		if (!new_key->name) {
+			pr_err("add_filename_trans: Failed to dup name\n");
+			kfree(new_key);
+			kfree(trans);
+			return false;
+		}
 		trans->otype = def->value;
-		hashtab_insert(db->filename_trans, new_key, trans);
+		if (hashtab_insert(db->filename_trans, new_key, trans)) {
+			pr_err("add_filename_trans: Failed to insert\n");
+			kfree(new_key->name);
+			kfree(new_key);
+			kfree(trans);
+			return false;
+		}
 	}
 
 	return ebitmap_set_bit(&db->filename_trans_ttypes, src->value - 1, 1) == 0;

@@ -172,8 +172,11 @@ int __init kernelsu_init(void)
 
 void __exit kernelsu_exit(void)
 {
-	// Phase 1: Stop all hooks first to prevent new callbacks
+	// stop the hooks first so no new callbacks arrive during teardown
 	ksu_syscall_hook_manager_exit();
+
+	// teardown for the ksu_selinux_hide_init() above
+	ksu_selinux_hide_exit();
 
 	ksu_supercalls_exit();
 
@@ -183,7 +186,7 @@ void __exit kernelsu_exit(void)
 	// Wait for any in-flight RCU readers (e.g. handler traversing allow_list)
 	synchronize_rcu();
 
-	// Phase 2: Now safe to release data structures
+	// hooks are stopped, now it's safe to release the data structures
 	ksu_observer_exit();
 
 	ksu_throne_tracker_exit();

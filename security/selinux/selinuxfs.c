@@ -624,10 +624,9 @@ static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
 		goto out;
 
 #ifdef CONFIG_KSU
-	/*
-	 * A type minted after the policy was loaded answers here the same way an
-	 * unknown type does. Trusted callers are exempt so labeling still works.
-	 */
+	/* return EINVAL for a context whose type we added over the base policy
+	 * (value > genuine_ntypes), like a stock device does for an unknown type.
+	 * Trusted callers are not masked. */
 	if (ksu_mask_compute_av_for_caller() && ksu_sid_is_ksu_added_type(sid)) {
 		length = -EINVAL;
 		goto out;
@@ -875,10 +874,8 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 		goto out;
 
 #ifdef CONFIG_KSU
-	/*
-	 * Same as the /context node above: an unknown type is rejected at
-	 * str_to_sid, so a minted one answers the same way here.
-	 */
+	/* mirror the str_to_sid EINVAL here so the /access path doesn't confirm an
+	 * added type through an allow query either. */
 	if (ksu_mask_compute_av_for_caller() &&
 	    (ksu_sid_is_ksu_added_type(ssid) || ksu_sid_is_ksu_added_type(tsid))) {
 		length = -EINVAL;
@@ -889,7 +886,8 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 	security_compute_av_user(state, ssid, tsid, tclass, &avd);
 
 #ifdef CONFIG_KSU
-	/* Only bits added over the base policy are ever subtracted here. */
+	/* subtract only the allow bits we added, so app-side callers read the
+	 * base-policy decision while root and zygisk keep working. */
 	if (ksu_mask_compute_av_for_caller())
 		avd.allowed &= ~ksu_compute_av_delta_bits(ssid, tsid, tclass);
 #endif

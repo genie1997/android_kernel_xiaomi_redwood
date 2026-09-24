@@ -22,6 +22,10 @@
 #include "ksu.h"
 #include "compat/kernel_compat.h"
 
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 static bool ksu_kernel_umount_enabled = true;
 
 static int kernel_umount_feature_get(u64 *value)
@@ -171,7 +175,13 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	if (err) {
 		kfree(tw);
 		pr_warn("unmount add task_work failed\n");
+		return 0;
 	}
+
+#ifdef CONFIG_KSU_SUSFS
+	/* only records that the umount work was queued; it can still fail later */
+	susfs_set_current_proc_umounted();
+#endif
 
 	return 0;
 }

@@ -72,11 +72,8 @@ int ksu_install_fd(void)
 }
 
 #ifdef CONFIG_KSU_SUSFS
-/* Route sys_reboot sub-commands to SuSFS handlers. ABI = upstream susfs4ksu
- * (ksu_susfs CLI, v2.2.0): magic2 == SUSFS_MAGIC selects this channel, CMD_SUSFS_*
- * rides in cmd, arg passed verbatim (each handler derefs it to the user st_susfs_*
- * struct and reports status via its err field). magic1/root gate already enforced
- * by the caller. Returns true if cmd was a CMD_SUSFS_* we handled. */
+/* SuSFS channel: magic2 == SUSFS_MAGIC, CMD_SUSFS_* in cmd, arg is the user
+ * struct. Deprecated CMD_SUSFS_* fall through to the default case. */
 static bool ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
 {
 	switch (cmd) {
@@ -286,8 +283,11 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 	}
 
 #ifdef CONFIG_KSU_SUSFS
-	/* SuSFS channel (upstream ksu_susfs ABI): magic2 == SUSFS_MAGIC selects it. */
-	if ((unsigned int)magic2 == SUSFS_MAGIC && ksu_handle_susfs_cmd(cmd, arg))
+	/* SuSFS channel (magic2 == SUSFS_MAGIC). Root only, as upstream: sys_reboot()
+	 * calls this before its own CAP_SYS_BOOT check, so nothing has gated the
+	 * caller yet. */
+	if ((unsigned int)magic2 == SUSFS_MAGIC && current_uid().val == 0 &&
+	    ksu_handle_susfs_cmd(cmd, arg))
 		return 0;
 #endif
 

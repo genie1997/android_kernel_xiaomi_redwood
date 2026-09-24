@@ -7,20 +7,15 @@
 #include "klog.h" // IWYU pragma: keep
 #include "ksu.h"
 
-/*
- * SIDs resolved once at init so the checks below are u32 compares instead of
- * strcmp. 0 means it never resolved - fall back to the string compare.
- */
+/* SIDs cached once at policy load; 0 means unresolved and callers fall back
+ * to the string compare. */
 static u32 cached_su_sid __read_mostly = 0;
 static u32 cached_zygote_sid __read_mostly = 0;
 static u32 cached_init_sid __read_mostly = 0;
 static u32 cached_system_server_sid __read_mostly = 0;
-/*
- * servicemanager resolves service_manager:{find,add} for whoever is calling
- * it through the userspace query path, so it has to see the real answer.
- * Get this wrong and every service comes back as not found for root: am, pm,
- * dumpsys and libsu RootService all fail and the manager just spins.
- */
+/* keep the servicemanager family exempt from masking: they gate service
+ * lookups over /sys/fs/selinux/access, so masking ksu's allow bit hangs the
+ * su prompt. They only return a handle, never the raw decision. */
 static u32 cached_servicemanager_sid __read_mostly = 0;
 static u32 cached_hwservicemanager_sid __read_mostly = 0;
 static u32 cached_vndservicemanager_sid __read_mostly = 0;
@@ -153,7 +148,9 @@ static void __security_release_secctx(struct lsm_context *cp)
 #define __security_release_secctx security_release_secctx
 #endif
 
-/* Called once after the policy is loaded (post-fs-data). */
+/*
+ * Resolve the cached SIDs once, after the policy is loaded (post-fs-data).
+ */
 
 void cache_sid(void)
 {
@@ -205,8 +202,7 @@ void cache_sid(void)
         pr_info("Cached system_server SID: %u\n", cached_system_server_sid);
     }
 
-    /* servicemanager family must be exempt from the av-query masking
-     * (see ksu_mask_compute_av_for_caller). Resolve their SIDs up front. */
+    /* servicemanager family: resolve up front, kept exempt from the masking. */
     {
         static const struct {
             const char *ctx;
@@ -230,12 +226,8 @@ void cache_sid(void)
     }
 }
 
-/*
- * The callers that have to keep seeing the real userspace compute_av/label
- * answer: kernel, init, system_server, zygote, the ksu domain itself (ksud,
- * root tooling and the zygisk daemons all run there), and servicemanager,
- * which gates service_manager:{find,add} for other domains over this path.
- */
+/* whether this caller should see the base-policy answer: yes for everyone
+ * except kernel/init/system_server/zygote/ksu and the servicemanager family. */
 bool ksu_mask_compute_av_for_caller(void)
 {
     u32 sid = current_sid();
@@ -259,7 +251,7 @@ bool ksu_mask_compute_av_for_caller(void)
     return true;
 }
 
-/* u32 compare against the cached SID, string compare if it never resolved. */
+/* compare against the cached SID; fall back to the string compare if unset */
 static bool is_sid_match(const struct cred *cred, u32 cached_sid,
                          const char *fallback_context)
 {

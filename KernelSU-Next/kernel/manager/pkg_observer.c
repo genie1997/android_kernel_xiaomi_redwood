@@ -36,20 +36,23 @@ static KSU_DECL_FSNOTIFY_OPS(ksu_handle_inode_event)
 	return 0;
 }
 
+/* set ->free_mark: the error path drops the last ref and calls it
+ * unconditionally, so leaving it NULL turns an -ENOMEM into a NULL deref. */
+static void m_free(struct fsnotify_mark *m)
+{
+	if (m) {
+		kfree(m);
+	}
+}
+
 static const struct fsnotify_ops ksu_ops = {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
 	.handle_inode_event = ksu_handle_inode_event,
 #else
 	.handle_event = ksu_handle_inode_event,
 #endif
+	.free_mark = m_free,
 };
-
-static void __maybe_unused m_free(struct fsnotify_mark *m)
-{
-	if (m) {
-		kfree(m);
-	}
-}
 
 static int add_mark_on_inode(struct inode *inode, u32 mask,
 			     struct fsnotify_mark **out)

@@ -6535,10 +6535,15 @@ static int selinux_setprocattr(const char *name, void *value, size_t size)
 
 #ifdef CONFIG_KSU
 	/*
-	 * An absent type fails at security_context_to_sid with EINVAL. A minted
-	 * one gets past that and would fall through to the transition check and
-	 * return -EPERM instead, so answer EINVAL here. Nothing legitimate sets
-	 * its own context this way - creds are transitioned in-kernel.
+	 * An app-side caller writing a context whose type we minted over the base
+	 * policy (ksu / ksu_file, or a module's zygisk_file) to proc attr/current
+	 * is reported as absent. Stock returns EINVAL at security_context_to_sid
+	 * for an absent type; here the type EXISTS (kept minted so root works), so
+	 * without this the later transition check would return -EPERM ("type
+	 * exists") instead of the stock EINVAL. Return EINVAL for app-side callers
+	 * to match stock. No legit userspace sets its own context to a ksu-added
+	 * type via proc attr (KSU transitions creds in-kernel, not through here);
+	 * trusted callers (kernel/init/system_server/zygote/ksu) are never masked.
 	 */
 	if (sid && ksu_mask_compute_av_for_caller() &&
 	    ksu_sid_is_ksu_added_type(sid))
