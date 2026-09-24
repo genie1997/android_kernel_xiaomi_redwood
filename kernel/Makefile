@@ -134,8 +134,10 @@ $(obj)/config_data.gz: $(obj)/config_data FORCE
 
 filechk_cat = cat $<
 
-$(obj)/config_data: $(KCONFIG_CONFIG) FORCE
-	$(call filechk,cat)
+filechk_ikconfig = $(AWK) -f $(srctree)/scripts/ikconfig-filter.awk $<
+
+$(obj)/config_data: $(KCONFIG_CONFIG) $(srctree)/scripts/ikconfig-filter.awk FORCE
+	$(call filechk,ikconfig)
 
 $(obj)/kheaders.o: $(obj)/kheaders_data.tar.xz
 
