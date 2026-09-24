@@ -35,13 +35,11 @@ static int seq_show(struct seq_file *m, void *v)
 	int f_flags = 0, ret = -ENOENT;
 	struct file *file = NULL;
 	struct task_struct *task;
+	int mnt_id;
+	unsigned long ino;
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	struct mount *mnt = NULL;
+	struct mount *mnt;
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	int mnt_id = 0;
-	unsigned long ino = 0;
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
 	task = get_proc_task(m->private);
 	if (!task)
@@ -72,10 +70,25 @@ static int seq_show(struct seq_file *m, void *v)
 	if (ret)
 		return ret;
 
+	mnt_id = real_mount(file->f_path.mnt)->mnt_id;
+	ino = file_inode(file)->i_ino;
+
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	/* leaves both alone unless it holds an entry for this inode */
+	if (SUSFS_IS_INODE_OPEN_REDIRECT(file_inode(file)))
+		susfs_open_redirect_spoof_seq_show(file_inode(file), &mnt_id, &ino);
+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* mount not in the task's table; report the nearest visible ancestor */
+	mnt = real_mount(file->f_path.mnt);
+	if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID &&
+	    susfs_is_sus_mnt_hidden_from_current())
+		mnt_id = susfs_get_non_sus_mnt_id_from_mnt(mnt);
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+
 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
-		   (long long)file->f_pos, f_flags,
-		   real_mount(file->f_path.mnt)->mnt_id,
-		   file_inode(file)->i_ino);
+		   (long long)file->f_pos, f_flags, mnt_id, ino);
 
 	show_fd_locks(m, file, files);
 	if (seq_has_overflowed(m))

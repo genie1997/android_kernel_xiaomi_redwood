@@ -2,6 +2,7 @@
 #define KSU_SUSFS_DEF_H
 
 #include <linux/bits.h>
+#include <linux/jump_label.h>
 #include <linux/string.h>
 #include <linux/version.h> // We need check kernel version.
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
@@ -61,6 +62,9 @@
  */
  // thread_info->flags is unsigned long :D
 #define TIF_PROC_UMOUNTED 33
+#define TIF_PROC_NO_SU 34
+/* reserved to match upstream's bit layout; unused in this tree */
+#define TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35
 
 #define AS_FLAGS_SUS_PATH 33
 #define AS_FLAGS_SUS_MOUNT 34
@@ -138,6 +142,8 @@ struct fsnotify_mark *vfsmount_mark, u32 mask, void *data,    \
 int data_type, susfs_fname_t file_name, u32 cookie)
 #endif
 
+/* only records that ksu_handle_umount() queued the umount for this task; it
+ * may still fail, so no hiding decision may depend on it. */
 static inline bool susfs_is_current_proc_umounted(void) {
 	return test_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED);
 }
@@ -146,8 +152,27 @@ static inline void susfs_set_current_proc_umounted(void) {
 	set_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED);
 }
 
-static inline bool susfs_is_current_proc_umounted_app(void) {
-	return (test_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED) &&
+static inline void susfs_clear_current_proc_umounted(void) {
+	clear_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED);
+}
+
+/* set when this task's uid is not root-allowed. Inherited across fork/exec,
+ * so the setuid hook sets/clears it to track the allowlist; the per-app
+ * hiding layer gates on it. */
+static inline bool susfs_is_current_proc_no_su(void) {
+	return test_ti_thread_flag(&current->thread_info, TIF_PROC_NO_SU);
+}
+
+static inline void susfs_set_current_proc_no_su(void) {
+	set_ti_thread_flag(&current->thread_info, TIF_PROC_NO_SU);
+}
+
+static inline void susfs_clear_current_proc_no_su(void) {
+	clear_ti_thread_flag(&current->thread_info, TIF_PROC_NO_SU);
+}
+
+static inline bool susfs_is_current_proc_no_su_app(void) {
+	return (test_ti_thread_flag(&current->thread_info, TIF_PROC_NO_SU) &&
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
 			__kuid_val(current_uid()) >= 10000);
 #else
@@ -155,17 +180,66 @@ static inline bool susfs_is_current_proc_umounted_app(void) {
 #endif
 }
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
+extern bool susfs_is_current_ksu_domain(void);
+
+/* true for tasks shown the mount tree with ksu mounts dropped; statfs() and
+ * fdinfo must answer with the non-ksu parent for the same tasks. */
+static inline bool susfs_is_sus_mnt_hidden_from_current(void)
+{
+	return static_branch_unlikely(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled) &&
+		!susfs_is_current_ksu_domain();
+}
+#endif
+
+/* sus_path/sus_kstat fast-path gates: the real work is out of line in
+ * fs/susfs.c; these inlines gate it behind a static key, off until armed, so
+ * an unarmed kernel pays nothing on these hot paths. */
+struct inode;
+struct kstat;
+struct mnt_idmap;
+
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+extern struct static_key_false susfs_sus_path_key;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+extern bool __susfs_is_inode_sus_path(struct mnt_idmap *idmap, struct inode *inode);
+static inline bool susfs_is_inode_sus_path(struct mnt_idmap *idmap, struct inode *inode)
+{
+	return static_branch_unlikely(&susfs_sus_path_key) &&
+		__susfs_is_inode_sus_path(idmap, inode);
+}
+#else
+extern bool __susfs_is_inode_sus_path(struct inode *inode);
+static inline bool susfs_is_inode_sus_path(struct inode *inode)
+{
+	return static_branch_unlikely(&susfs_sus_path_key) &&
+		__susfs_is_inode_sus_path(inode);
+}
+#endif
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+extern struct static_key_false susfs_sus_kstat_key;
+extern void __susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat);
+static inline void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat)
+{
+	if (static_branch_unlikely(&susfs_sus_kstat_key))
+		__susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
+}
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+
 #define SUSFS_IS_INODE_SUS_MAP(inode) \
-		inode && inode->i_mapping && \
-		unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_state)) && \
-		susfs_is_current_proc_umounted_app()
+		((inode) && (inode)->i_mapping && \
+		 unlikely(test_bit(AS_FLAGS_SUS_MAP, &(inode)->i_state)) && \
+		 susfs_is_current_proc_no_su_app())
 
 #define SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode) \
-		inode && inode->i_mapping && \
-		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_state))
+		((inode) && (inode)->i_mapping && \
+		 unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &(inode)->i_state)))
 
 #define SUSFS_IS_INODE_OPEN_REDIRECT(inode) \
-		inode && inode->i_mapping && \
-		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_state)) && \
-		susfs_is_current_proc_umounted_app()
+		((inode) && (inode)->i_mapping && \
+		 unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &(inode)->i_state)) && \
+		 susfs_is_current_proc_no_su_app())
 #endif // #ifndef KSU_SUSFS_DEF_H

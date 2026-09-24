@@ -138,12 +138,14 @@ static int mnt_alloc_id(struct mount *mnt)
 static void mnt_free_id(struct mount *mnt)
 {
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
-		ida_free(&susfs_mnt_id_ida, mnt->mnt_id);
+	/* an unshared ksu mount reuses the original mnt_id, so there is nothing to
+	 * free; check that before the range test. */
+	if (mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT) {
 		return;
 	}
 
-	if (mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT) {
+	if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+		ida_free(&susfs_mnt_id_ida, mnt->mnt_id);
 		return;
 	}
 
@@ -160,12 +162,8 @@ static int mnt_alloc_group_id(struct mount *mnt)
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	int res;
 
-	/* - mnt_alloc_group_id will unlikely get called after screen is unlocked on reboot,
-	 *   so here we can persistently check if current is ksu domain, and assign a sus
-	 *   mnt_group_id if so.
-	 * - Also we can re-use the original mnt_group_ida so there is no need to use
-	 *   another ida nor hook the mnt_release_group_id() function.
-	 */
+	/* ksu-domain peer groups use their own ida based at DEFAULT_KSU_MNT_GROUP_ID,
+	 * so they can be told apart. */
 	if (susfs_is_current_ksu_domain()) {
 		res = ida_alloc_min(&susfs_mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL);
 		goto bypass_orig_flow;
@@ -4431,7 +4429,10 @@ struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt) {
 	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
 	mntget(&mnt->mnt);
 	if (!mnt->mnt.mnt_root || IS_ERR(mnt->mnt.mnt_root)) {
+		/* callers drop a mount and a dentry ref, so hand the fallback out with both */
 		mntput(&mnt->mnt);
+		mntget(vfsmnt);
+		dget(vfsmnt->mnt_root);
 		unlock_mount_hash();
 		return vfsmnt;
 	}
