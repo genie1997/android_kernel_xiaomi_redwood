@@ -101,12 +101,13 @@ else
 # KernelSU-Next is a symlink inside the kernel git repo, so GIT_ROOT ==
 # KERNEL_GIT_ROOT and the git-version block above is skipped, so the fallback
 # would report KSU_VERSION=1 / tag v0.0.1 instead of the real version. Pin the
-# value for the frozen KSU-Next-legacy commit a54e4fa4: `git rev-list --count
-# a54e4fa4` = 2993, so ksu_version = 30000 + 2993 + 200 = 33193. Matches what a
-# proper git-based build produces.
+# value for KSU-Next-legacy a54e4fa4 plus the merged legacy commits f6a1570c
+# and dd074bc6 (9b36ff0f is deferred, see the selinux_hide re-eval note): two of
+# the three commits => ksu_version = 30000 + 2995 + 200 = 33195. Bump to 33196
+# once 9b36ff0f lands.
 $(warning "KSU_GIT_VERSION not defined (in-tree symlink); using pinned a54e4fa4 version")
-KSU_VERSION_FALLBACK := 33193
-$(info -- KernelSU-Next version (pinned a54e4fa4): $(KSU_VERSION_FALLBACK))
+KSU_VERSION_FALLBACK := 33195
+$(info -- KernelSU-Next version (pinned a54e4fa4 + 2 legacy commits): $(KSU_VERSION_FALLBACK))
 ccflags-y += -DKSU_VERSION=$(KSU_VERSION_FALLBACK)
 endif
 
@@ -130,6 +131,14 @@ ifndef KSU_NEXT_MANAGER_HASH
 KSU_NEXT_MANAGER_HASH := 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7
 endif
 
+# UAPI level advertised to the manager. Raise only when the manager-facing
+# ioctl ABI is unchanged; a genuine ABI change needs a backport. v3.4.0 = 4.
+ifndef KSU_MANAGER_COMPAT_UAPI
+KSU_MANAGER_COMPAT_UAPI := 4
+endif
+ccflags-y += -DKERNEL_SU_UAPI_VERSION=$(KSU_MANAGER_COMPAT_UAPI)
+$(info -- KernelSU-Next Manager compat UAPI: $(KSU_MANAGER_COMPAT_UAPI))
+
 ifdef KSU_MANAGER_PACKAGE
 ccflags-y += -DKSU_MANAGER_PACKAGE=\"$(KSU_MANAGER_PACKAGE)\"
 $(info -- KernelSU-Next Manager package name: $(KSU_MANAGER_PACKAGE))
@@ -148,6 +157,15 @@ $(info -- KernelSU-Next: Hook mode: Kprobes)
 ccflags-y += -DKSU_KPROBES_HOOK
 # Let's make it 0, so it would pass.
 HAVE_KSU_HOOK := 0
+endif
+
+ifeq ($(CONFIG_KSU_SYSCALL_TABLE_HOOK), y)
+$(info -- KernelSU-Next: Hook mode: Syscall table patching)
+ccflags-y += -DKSU_SYSCALL_TABLE_HOOK
+HAVE_KSU_HOOK := 0
+kernelsu-objs += hook/patch_memory.o
+kernelsu-objs += hook/syscall_table_hook.o
+kernelsu-objs += infra/symbol_resolver.o
 endif
 
 ifeq ($(CONFIG_KSU_MANUAL_HOOK), y)
@@ -220,15 +238,13 @@ $(shell sed -i 's/return inode->i_security/return selinux_inode(inode)/g' $(srct
 $(shell sed -i 's/\bisec = inode->i_security;/isec = selinux_inode(inode);/' $(srctree)/security/selinux/hooks.c)
 endif
 
-ifneq ($(shell grep -q "selinux_cred" $(srctree)/security/selinux/hooks.c; echo $$?),0)
+ifneq ($(shell grep -Eq 'selinux_cred\(.*\)' $(srctree)/security/selinux/hooks.c; echo $$?),0)
 $(info -- KSU_NEXT: patching selinux/hooks.c for selinux_cred)
 $(shell sed -i 's/tsec = cred->security;/tsec = selinux_cred(cred);/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/const struct task_security_struct \*tsec = cred->security;/const struct task_security_struct *tsec = selinux_cred(cred);/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/const struct task_security_struct \*tsec = current_security();/const struct task_security_struct *tsec = selinux_cred(current_cred());/g' $(srctree)/security/selinux/hooks.c)
-$(shell sed -i 's/rc = selinux_determine_inode_label(current_security())/rc = selinux_determine_inode_label(selinux_cred(current_cred()))/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/old_tsec = current_security();/old_tsec = selinux_cred(current_cred());/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/new_tsec = bprm->cred->security;/new_tsec = selinux_cred(bprm->cred);/g' $(srctree)/security/selinux/hooks.c)
-$(shell sed -i 's/rc = selinux_determine_inode_label(old->security)/rc = selinux_determine_inode_label(selinux_cred(old))/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/tsec = new->security;/tsec = selinux_cred(new);/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/tsec = new_creds->security;/tsec = selinux_cred(new_creds);/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/old_tsec = old->security;/old_tsec = selinux_cred(old);/g' $(srctree)/security/selinux/hooks.c)
@@ -236,6 +252,8 @@ $(shell sed -i 's/const struct task_security_struct \*old_tsec = old->security;/
 $(shell sed -i 's/struct task_security_struct \*tsec = new->security;/struct task_security_struct *tsec = selinux_cred(new);/g' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/__tsec = current_security();/__tsec = selinux_cred(current_cred());/' $(srctree)/security/selinux/hooks.c)
 $(shell sed -i 's/__tsec = __task_cred(p)->security;/__tsec = selinux_cred(__task_cred(p));/' $(srctree)/security/selinux/hooks.c)
+$(shell sed -i 's/current_security()/selinux_cred(current_cred())/g' $(srctree)/security/selinux/hooks.c)
+$(shell sed -i 's/old->security/selinux_cred(old)/g' $(srctree)/security/selinux/hooks.c)
 endif
 
 ifneq ($(shell grep -q "selinux_inode(inode)" $(srctree)/security/selinux/selinuxfs.c; echo $$?),0)

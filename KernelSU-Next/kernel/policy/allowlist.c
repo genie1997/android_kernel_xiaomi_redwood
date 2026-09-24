@@ -47,6 +47,16 @@ static int allow_list_arr[PAGE_SIZE / sizeof(int)] __read_mostly
 	__aligned(PAGE_SIZE);
 static int allow_list_pointer __read_mostly = 0;
 
+static bool uid_in_arr(uid_t uid)
+{
+    int i;
+    for (i = 0; i < allow_list_pointer; i++) {
+        if (allow_list_arr[i] == uid)
+            return true;
+    }
+    return false;
+}
+
 static void remove_uid_from_arr(uid_t uid)
 {
     int i;
@@ -283,6 +293,11 @@ out:
                 ~(1 << (profile->current_uid % BITS_PER_BYTE));
     } else {
         if (profile->allow_su) {
+            /* remove any existing entry first: on the already-granted path, appending
+             * unconditionally would leave a stale entry that survives a revoke. */
+            if (uid_in_arr(profile->current_uid))
+                goto out_unlock;
+
             /*
              * 1024 apps with uid higher than BITMAP_UID_MAX
              * registered to request superuser?

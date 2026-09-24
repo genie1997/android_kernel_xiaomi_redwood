@@ -60,6 +60,11 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
         ksu_set_task_tracepoint_flag(current);
 #endif
 
+#ifdef CONFIG_KSU_SUSFS
+        /* manager is always root-allowed and returns below, so clear the flag here */
+        susfs_clear_current_proc_no_su();
+#endif
+
         pr_info("install fd for manager: %d\n", new_uid);
         struct callback_head *cb = kzalloc(sizeof(*cb), GFP_ATOMIC);
         if (!cb)
@@ -94,15 +99,17 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
     ksu_handle_umount(old_uid, new_uid);
 
 #ifdef CONFIG_KSU_SUSFS
-    // sus_path/sus_kstat/sus_map/open_redirect all gate on TIF_PROC_UMOUNTED
-    // and nothing else sets it. Same spot as susfs4ksu. Allowed uids are
-    // skipped so root keeps normal fs visibility.
+    /* flag whether this uid is root-allowed (the per-app susfs layer gates on
+     * it). Thread flags survive fork/exec, so set on one branch and clear on the
+     * other, to stay in step with a grant or revoke. */
     if (!ksu_is_allow_uid_for_current(new_uid)) {
-        susfs_set_current_proc_umounted();
+        susfs_set_current_proc_no_su();
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        // re-flag sus_path_loop entries off the setuid path, no-op if empty
+        // re-flag this app's sus_path_loop entries; deferred off the setuid path
         schedule_work(&susfs_extra_works);
 #endif
+    } else {
+        susfs_clear_current_proc_no_su();
     }
 #endif
 

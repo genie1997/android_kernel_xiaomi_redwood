@@ -35,10 +35,9 @@ extern bool ksu_input_hook __read_mostly;
 #endif
 extern struct selinux_state selinux_state;
 
-// Disabled by default. The upstream status-page hook also has a page-pointer
-// bug (page_address vs struct page*) that breaks libselinux's mmap of
-// /sys/fs/selinux/status for app UIDs (>=10000), so it is left off here.
-static bool ksu_selinux_hide_is_enabled __read_mostly = false;
+// on 5.4, sel_{read,mmap}_handle_status keep a struct page* in
+// filp->private_data (not page_address), so hand back the page*
+static bool ksu_selinux_hide_is_enabled __read_mostly = true;
 
 static u32 ksu_sid __read_mostly = 0;
 static u32 priv_app_sid __read_mostly = 0;
@@ -137,7 +136,7 @@ static int __nocfi my_sel_open_handle_status(struct inode *inode, struct file *f
 		   ksu_selinux_hide_is_enabled)) {
 		struct page *data = READ_ONCE(fake_status);
 		if (data) {
-			filp->private_data = page_address(data);
+			filp->private_data = data;
 			return 0;
 		}
 	}
@@ -244,6 +243,12 @@ static int selinux_hide_status_feature_get(u64 *value)
 static int selinux_hide_status_feature_set(u64 value)
 {
 	bool enable = !!value;
+
+	/* the spoof only installs at early boot, so refuse a runtime enable that
+	 * would report it active while nothing is hidden. Disable stays allowed. */
+	if (enable && !ksu_selinux_hide_is_enabled)
+		return -EOPNOTSUPP;
+
 	if (enable == ksu_selinux_hide_is_enabled) {
 		pr_info("ksu_selinux_hide: no need to change\n");
 		return 0;

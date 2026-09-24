@@ -1,5 +1,6 @@
 #include <linux/err.h>
 #include <linux/fs.h>
+#include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/printk.h>
 
@@ -14,6 +15,7 @@
 bool ksu_module_mounted __read_mostly = false;
 bool ksu_boot_completed __read_mostly = false;
 extern void stop_input_hook();
+extern void ksu_stop_sys_read_hook(void);
 
 extern void ksu_avc_spoof_late_init();
 
@@ -31,6 +33,9 @@ void on_post_fs_data(void)
 	ksu_observer_init();
 	// sanity check, this may influence the performance
 	stop_input_hook();
+	/* init.rc is read by now, so retire the read hook. Runs in sleepable
+	 * context (init task_work / ksud supercall). */
+	ksu_stop_sys_read_hook();
 }
 
 extern void ext4_unregister_sysfs(struct super_block *sb);
@@ -44,7 +49,16 @@ int nuke_ext4_sysfs(const char *mnt)
 		return err;
 	}
 
-	struct super_block *sb = path.dentry->d_inode->i_sb;
+	/* Only act on a real mount root: kern_path() also resolves a plain dir,
+	 * whose i_sb is the containing fs (e.g. ext4 /data). Refuse rather than
+	 * nuke the wrong superblock. */
+	if (path.dentry != path.mnt->mnt_root) {
+		pr_err("nuke refused: '%s' is not a mount root\n", mnt);
+		path_put(&path);
+		return -EINVAL;
+	}
+
+	struct super_block *sb = path.mnt->mnt_sb;
 	const char *name = sb->s_type->name;
 	if (strcmp(name, "ext4") != 0) {
 		pr_info("nuke but module aren't mounted\n");
@@ -65,8 +79,10 @@ void on_module_mounted(void)
 
 void on_boot_completed(void)
 {
-    ksu_boot_completed = true;
     pr_info("on_boot_completed!\n");
+    /* Raise the flag only after the first track_throne(), or a packages.list
+     * rename can re-enter the synchronous path with i_rwsem held. */
     track_throne(true);
+    ksu_boot_completed = true;
     ksu_avc_spoof_late_init();
 }

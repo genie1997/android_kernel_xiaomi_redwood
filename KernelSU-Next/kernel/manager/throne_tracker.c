@@ -177,7 +177,9 @@ void search_manager(const char *path, int depth, struct list_head *uid_data)
 			struct file *file;
 
 			if (!stop) {
-				file = ksu_filp_open_compat(pos->dirpath, O_RDONLY | O_NOFOLLOW, 0);
+				// O_NOATIME: another app's directory (as in apk_sign.c)
+				file = ksu_filp_open_compat(pos->dirpath,
+							    O_RDONLY | O_NOFOLLOW | O_NOATIME, 0);
 				if (IS_ERR(file)) {
 					pr_err("Failed to open directory: %s, err: %ld\n",
 						pos->dirpath, PTR_ERR(file));
@@ -287,7 +289,11 @@ static bool do_track_throne_core(bool prune_only)
 		if (chr != '\n')
 			continue;
 
-		count = ksu_kernel_read_compat(fp, buf, sizeof(buf), &line_start);
+		// leave room for the NUL: strsep() below walks off an unterminated buffer
+		count = ksu_kernel_read_compat(fp, buf, sizeof(buf) - 1, &line_start);
+		if (count <= 0)
+			break;
+		buf[count] = '\0';
 
 		struct uid_data *data = kzalloc(sizeof(struct uid_data), GFP_KERNEL);
 		if (!data) {
@@ -299,21 +305,18 @@ static bool do_track_throne_core(bool prune_only)
 		const char *delim = " ";
 		char *package = strsep(&tmp, delim);
 		char *uid = strsep(&tmp, delim);
-		if (!uid || !package) {
+		u32 res;
+
+		if (!uid || !package || kstrtou32(uid, 10, &res)) {
+			// skip the bad line; stopping would revoke root from every app after it
+			pr_err("update_uid: skipping unparseable line\n");
 			kfree(data);
-			pr_err("update_uid: package or uid is NULL!\n");
-			break;
+			line_start = pos;
+			continue;
 		}
 
-		u32 res;
-		if (kstrtou32(uid, 10, &res)) {
-			kfree(data);
-			pr_err("update_uid: uid parse err\n");
-			break;
-		}
 		data->uid = res;
-		memcpy(data->package, package, KSU_MAX_PACKAGE_NAME - 1);
-		data->package[KSU_MAX_PACKAGE_NAME - 1] = '\0';
+		strscpy(data->package, package, sizeof(data->package));
 		list_add_tail(&data->list, &uid_list);
 		// reset line start
 		line_start = pos;
@@ -395,14 +398,23 @@ void track_throne(bool prune_only)
 
 	// First scan must be synchronous to not break FDE/FBEv1 on older kernels
 	if (unlikely(throne_tracker_first_run)) {
+		bool success;
+
 		mutex_lock(&throne_tracker_mutex);
-		
+
 		const struct cred *saved_cred = override_creds(ksu_cred);
-		do_track_throne_core(prune_only);
+		success = do_track_throne_core(prune_only);
 		revert_creds(saved_cred);
-		
+
 		mutex_unlock(&throne_tracker_mutex);
 		throne_tracker_first_run = false;
+		if (!success) {
+			// packages.list not ready; hand off to the worker instead of re-entering
+			throne_data.prune_only = prune_only;
+			throne_data.retries = 0;
+			schedule_delayed_work(&throne_data.dwork,
+					      msecs_to_jiffies(100));
+		}
 		return;
 	}
 
