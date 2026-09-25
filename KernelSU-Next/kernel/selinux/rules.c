@@ -163,18 +163,11 @@ extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
 static void reset_avc_cache()
 {
     /*
-     * Do NOT call selinux_status_update_policyload() here. It rewrites the
-     * mmap'd SELinux status page's policyload/sequence fields, which
-     * desynchronises the status-page generation from the /access path's
-     * avd.seqno (== latest_granting). We only ADD allow rules to the EXISTING
-     * policydb (no security_load_policy runs, so latest_granting is never
-     * advanced); flushing the kernel AVC with avc_ss_reset(0) is a pure cache
-     * flush that never advances the visible generation (avc_latest_notif_update
-     * only raises on seqno > latest_notif). Leaving the status page at its boot
-     * value keeps it byte-consistent with avd.seqno on a single-policy-load
-     * device. Enforcement is unaffected: adding an allow only turns a cached
-     * deny into an allow, and the flush drops that cached deny so it is
-     * recomputed against the new policy.
+     * Do NOT call selinux_status_update_policyload() here: we only add allow
+     * rules to the existing policydb, so latest_granting never advances, and
+     * bumping the status page would desync it from avd.seqno on the /access
+     * path. avc_ss_reset() is a pure cache flush; enforcement is unaffected,
+     * the dropped deny is simply recomputed.
      */
 #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
 	LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))

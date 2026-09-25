@@ -204,15 +204,9 @@ void susfs_run_sus_path_loop(void) {
 	revert_creds(saved);
 }
 
-// Re-flag work: sus_path_loop entries live in a list (LH_SUS_PATH_LOOP) and are
-// only marked on the inode when susfs_run_sus_path_loop() runs. The inode
-// AS_FLAGS_SUS_PATH bit is lost whenever the inode is evicted from cache, so
-// without a periodic re-flag, add_sus_path_loop would stop hiding (and, since
-// add_sus_path_loop never flags at add time, would never hide at all). We
-// schedule this from the setuid hook on every root->app transition, mirroring
-// upstream susfs4ksu's deferred-workqueue design. DECLARE_WORK gives a
-// compile-time-valid work_struct so an early schedule_work() before susfs_init()
-// can never touch uninitialised memory.
+// The AS_FLAGS_SUS_PATH inode bit is lost on eviction, so sus_path_loop entries
+// need re-flagging; the setuid hook schedules this on every root->app switch.
+// DECLARE_WORK keeps a schedule_work() before susfs_init() safe.
 static void susfs_run_extra_works(struct work_struct *work) {
 	susfs_run_sus_path_loop();
 }
@@ -1146,11 +1140,10 @@ int susfs_open_redirect_spoof_seq_show(struct inode *inode, int *out_mnt_id, uns
 	return -EINVAL;
 }
 
-/* NOTE: takes `char **spoofed_name` (double pointer). The buffer is allocated
- * here and returned to the caller through *spoofed_name so the caller can print
- * it and kfree() it. The old `char *` (single pointer) signature allocated into
- * a by-value local, so the caller always saw NULL -> the real redirected path
- * leaked into /proc/<pid>/maps AND the kzalloc'd buffer was leaked every call. */
+/*
+ * Allocates into *spoofed_name, which the caller prints and kfree()s.
+ * *spoofed_name must be NULL on entry.
+ */
 int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **spoofed_name) {
 	struct st_susfs_open_redirect_hlist *entry = NULL;
 	int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
