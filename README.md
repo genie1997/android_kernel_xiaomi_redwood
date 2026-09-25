@@ -20,7 +20,10 @@ Neutron Clang in your `$PATH`, then:
 export PATH="$HOME/toolchains/neutron-clang/bin:$PATH"
 export KBUILD_BUILD_USER=genie KBUILD_BUILD_HOST=vajra
 
-ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi-"
+# Map the tree path to "" on both C and assembly, so no build path is baked into
+# the Image. The kernel only scrubs __FILE__ for C; entry.S needs KAFLAGS too.
+ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+      KCFLAGS=-ffile-prefix-map=$PWD/= KAFLAGS=-ffile-prefix-map=$PWD/="
 
 make -j$(nproc) O=out $ARGS vendor/xiaomi-qgki_defconfig
 scripts/kconfig/merge_config.sh -O out -m out/.config \
@@ -29,7 +32,8 @@ make -j$(nproc) O=out $ARGS olddefconfig
 make -j$(nproc) O=out $ARGS Image
 ```
 
-The kernel image lands at `out/arch/arm64/boot/Image`.
+The kernel image lands at `out/arch/arm64/boot/Image`. Check nothing leaked:
+`strings out/arch/arm64/boot/Image | grep /home/` should print nothing.
 
 ## Flashing
 
