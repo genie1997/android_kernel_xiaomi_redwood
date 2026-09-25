@@ -11,15 +11,16 @@
 # leaves any real change for review.
 #
 # Usage: ksun-manager-compat-check.sh [upstream-repo] [manager-ref]
-#   upstream-repo  a local KernelSU-Next checkout
+#   upstream-repo  a local KernelSU-Next checkout (or set $KSUN_REF)
 #   manager-ref    a manager tag; defaults to the newest v*.*.* tag
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
-our_uapi="$here/../../uapi"
-up="${1:-$HOME/redwood-work/ksun-ref}"
+our_uapi="$here/../KernelSU-Next/uapi"
+up="${1:-${KSUN_REF:-}}"
 ref="${2:-}"
 
+[ -n "$up" ] || { sed -n '2,16p' "$0" >&2; exit 2; }
 [ -d "$up/.git" ] || { echo "not a git repo: $up" >&2; exit 2; }
 git -C "$up" fetch --tags --quiet origin >/dev/null 2>&1 || true
 [ -n "$ref" ] || ref="$(git -C "$up" tag | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
@@ -63,9 +64,10 @@ normalize() { python3 -c "$NORM_PY"; }
 echo "Manager repo:        $up"
 echo "Manager ref:         $ref"
 mgr_uapi="$(git -C "$up" show "$ref:uapi/supercall.h" | sed -nE 's/.*KERNEL_SU_UAPI_VERSION[^0-9]*([0-9]+).*/\1/p' | tail -1)"
-our_adv="$(sed -nE 's/.*KSU_MANAGER_COMPAT_UAPI[^0-9]*([0-9]+).*/\1/p' "$here/../Kbuild" | tail -1)"
+kbuild="$here/../KernelSU-Next/kernel/Kbuild"
+our_adv="$(sed -nE 's/.*KSU_MANAGER_COMPAT_UAPI[^0-9]*([0-9]+).*/\1/p' "$kbuild" | tail -1)"
 echo "Manager UAPI:        ${mgr_uapi:-?}"
-echo "Our advertised UAPI: ${our_adv:-?}  (KSU_MANAGER_COMPAT_UAPI in kernel/Kbuild)"
+echo "Our advertised UAPI: ${our_adv:-?}  (KSU_MANAGER_COMPAT_UAPI in KernelSU-Next/kernel/Kbuild)"
 echo
 
 changed=0
