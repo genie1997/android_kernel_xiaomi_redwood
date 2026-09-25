@@ -91,37 +91,45 @@ $(info -- KernelSU-Next Git repo detected at: $(GIT_ROOT))
 endif
 endif
 
+# KernelSU-Next is a symlink in this tree, so it has no .git of its own and
+# the git-derived version below is unavailable. Pin what the manager reports.
+KSU_VERSION_OVERRIDE ?= 33195
+KSU_VERSION_TAG_OVERRIDE ?= v3.2.0-legacy
+
 # Calculate version if git version is available
 ifdef KSU_GIT_VERSION_VALID
-# ksu_version: major * 30000 + git version for historical reasons
 $(eval KSU_VERSION=$(shell expr 30000 + $(KSU_GIT_VERSION) + 200))
 $(info -- KernelSU-Next version: $(KSU_VERSION))
-ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
 else
-# KernelSU-Next is a symlink inside the kernel git repo, so GIT_ROOT ==
-# KERNEL_GIT_ROOT and the git-version block above is skipped, so the fallback
-# would report KSU_VERSION=1 / tag v0.0.1 instead of the real version. Pin the
-# value for KSU-Next-legacy a54e4fa4 plus the merged legacy commits f6a1570c
-# and dd074bc6 (9b36ff0f is deferred, see the selinux_hide re-eval note): two of
-# the three commits => ksu_version = 30000 + 2995 + 200 = 33195. Bump to 33196
-# once 9b36ff0f lands.
-$(warning "KSU_GIT_VERSION not defined (in-tree symlink); using pinned a54e4fa4 version")
-KSU_VERSION_FALLBACK := 33195
-$(info -- KernelSU-Next version (pinned a54e4fa4 + 2 legacy commits): $(KSU_VERSION_FALLBACK))
-ccflags-y += -DKSU_VERSION=$(KSU_VERSION_FALLBACK)
+# If there is no .git directory, use default version
+$(warning "KSU_GIT_VERSION not defined! It is better to make KernelSU-Next a git repository!")
+KSU_VERSION_FALLBACK := 1
+$(info -- KernelSU-Next version fallback: $(KSU_VERSION_FALLBACK))
+KSU_VERSION := $(KSU_VERSION_FALLBACK)
 endif
+
+# Allow integrators to pin the reported version (e.g. when backporting
+# onto release branches where the commit count does not match releases)
+ifdef KSU_VERSION_OVERRIDE
+KSU_VERSION := $(KSU_VERSION_OVERRIDE)
+$(info -- KernelSU-Next version override: $(KSU_VERSION))
+endif
+ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
 
 ifdef KSU_GIT_VERSION_VALID
 $(eval KSU_VERSION_TAG=$(KSU_GIT_TAG))
+else
+$(warning "KSU_VERSION_TAG not defined! It is better to make KernelSU-Next a git submodule!")
+KSU_VERSION_TAG_FALLBACK := v0.0.1
+KSU_VERSION_TAG=$(KSU_VERSION_TAG_FALLBACK)
+endif
+
+ifdef KSU_VERSION_TAG_OVERRIDE
+KSU_VERSION_TAG := $(KSU_VERSION_TAG_OVERRIDE)
+endif
+
 $(info -- KernelSU-Next tag: $(KSU_VERSION_TAG))
 ccflags-y += -DKSU_VERSION_TAG=\"$(KSU_VERSION_TAG)\"
-else
-# pinned tag for commit a54e4fa4 = `git describe --tags --abbrev=0` = v3.2.0-legacy
-$(warning "KSU_VERSION_TAG not defined (in-tree symlink); using pinned a54e4fa4 tag")
-KSU_VERSION_TAG_FALLBACK := v3.2.0-legacy
-$(info -- KernelSU-Next tag (pinned a54e4fa4): $(KSU_VERSION_TAG_FALLBACK))
-ccflags-y += -DKSU_VERSION_TAG=\"$(KSU_VERSION_TAG_FALLBACK)\"
-endif
 
 ifndef KSU_NEXT_MANAGER_SIZE
 KSU_NEXT_MANAGER_SIZE := 0x3e6
