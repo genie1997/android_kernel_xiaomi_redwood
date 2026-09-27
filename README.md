@@ -1,20 +1,18 @@
-# Vajra Kernel — Xiaomi redwood
+# Vajra Kernel
 
-Custom kernel for `redwood` (POCO X5 Pro 5G), based on the Scarlet v6.0 base with
-KernelSU-Next and SuSFS.
+Custom kernel for the Xiaomi **redwood** (POCO X5 Pro 5G), with KernelSU-Next and SuSFS built in.
 
-Linux 5.4.302. Built with Neutron Clang 24.
+`Linux 5.4.302` · `Neutron Clang 24` · `arm64`
 
 ## Features
 
-- Scarlet v6.0 base, on 5.4.302
-- KernelSU-Next (root built in, no ramdisk patch needed)
-- SuSFS v2.3.0
-- Compiled with Neutron Clang 24 (LLVM 24)
+- **KernelSU-Next** — root the moment you flash, no ramdisk patching
+- **SuSFS 2.3.0** — in the kernel, nothing extra to install
+- Compiled with **Neutron Clang 24** (LLVM 24)
 
 ## Build
 
-Neutron Clang in your `$PATH`, then:
+Put Neutron Clang in your `$PATH`, then:
 
 ```bash
 export PATH="$HOME/toolchains/neutron-clang/bin:$PATH"
@@ -32,33 +30,28 @@ make -j$(nproc) O=out $ARGS olddefconfig
 make -j$(nproc) O=out $ARGS Image
 ```
 
-The kernel image lands at `out/arch/arm64/boot/Image`. Check nothing leaked:
+The image lands at `out/arch/arm64/boot/Image`. Check nothing leaked:
 `strings out/arch/arm64/boot/Image | grep /home/` should print nothing.
 
 ## Flashing
 
-Grab the AnyKernel3 zip from Releases and flash it in recovery, or with Franco Kernel Manager. It
-patches the kernel into whatever boot image is already on the phone, so it works on top of any
-redwood ROM without a wipe.
+Grab the AnyKernel3 zip from **Releases** and flash it in recovery or with Franco Kernel Manager. It
+patches the kernel into whatever boot image is already on the phone, so it works on top of any redwood
+ROM without a wipe.
 
-Built and tested on redwood. It should be fine on other redwood ROMs of the same Android
-generation — flash it, and if something misbehaves open an issue with the ROM name.
+Flashing this roots the ROM you put it on — that is the point, but skip it if you do not want root.
 
-Heads up: this kernel has KernelSU-Next in it, so flashing it roots the ROM you put it on. That's the
-point, but don't flash it if you don't want root.
-
-If it ever fails to boot, the kernel reserves 4 MB for ramoops, so the panic survives the reboot —
-don't power the phone off, restore your old boot image, then send me
-`/sys/fs/pstore/dmesg-ramoops-0`.
+If it ever fails to boot, the kernel reserves 4 MB for ramoops so the panic survives a reboot — do not
+power off, restore your old boot image, then send `/sys/fs/pstore/dmesg-ramoops-0`.
 
 ## Credits
 
 - **[Scarlet](https://github.com/Atom-X-Devs/scarlet_xiaomi_sm7325)** by
   [Tashfin Shakeer Rhythm (@Tashar02)](https://github.com/Tashar02) and
-  [Atom-X-Devs](https://github.com/Atom-X-Devs) — the base tree this is built on
+  [Atom-X-Devs](https://github.com/Atom-X-Devs) — the base tree (`6697b3ec`)
 - [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next)
 - [SuSFS](https://gitlab.com/simonpunk/susfs4ksu) by simonpunk
-- [Redwood-AOSP](https://github.com/Redwood-AOSP) — device/vendor trees
+- [Redwood-AOSP](https://github.com/Redwood-AOSP) — device and vendor trees
 
 ## License
 
