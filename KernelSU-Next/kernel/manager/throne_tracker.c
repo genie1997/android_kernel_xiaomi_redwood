@@ -18,6 +18,7 @@
 #include "manager_identity.h"
 #include "throne_tracker.h"
 #include "compat/kernel_compat.h"
+#include "util.h"
 
 uid_t ksu_manager_appid = KSU_INVALID_APPID;
 
@@ -177,9 +178,8 @@ void search_manager(const char *path, int depth, struct list_head *uid_data)
 			struct file *file;
 
 			if (!stop) {
-				// O_NOATIME: another app's directory (as in apk_sign.c)
-				file = ksu_filp_open_compat(pos->dirpath,
-							    O_RDONLY | O_NOFOLLOW | O_NOATIME, 0);
+				// scan another app's dir without touching atime or raising fsnotify
+				file = ksu_filp_open_nonotify(pos->dirpath, O_RDONLY | O_NOFOLLOW | O_NOATIME);
 				if (IS_ERR(file)) {
 					pr_err("Failed to open directory: %s, err: %ld\n",
 						pos->dirpath, PTR_ERR(file));
