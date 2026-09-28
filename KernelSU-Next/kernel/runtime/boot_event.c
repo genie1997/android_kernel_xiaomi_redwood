@@ -4,17 +4,17 @@
 #include <linux/namei.h>
 #include <linux/printk.h>
 
+#include "feature/selinux_hide.h"
+
 #include "policy/allowlist.h"
 #include "klog.h" // IWYU pragma: keep
 #include "runtime/ksud_boot.h"
 #include "runtime/ksud.h"
 #include "manager/manager_observer.h"
 #include "manager/throne_tracker.h"
-#include "selinux/selinux.h"
 
 bool ksu_module_mounted __read_mostly = false;
 bool ksu_boot_completed __read_mostly = false;
-extern void stop_input_hook();
 extern void ksu_stop_sys_read_hook(void);
 
 extern void ksu_avc_spoof_late_init();
@@ -32,7 +32,8 @@ void on_post_fs_data(void)
 	ksu_load_allow_list();
 	ksu_observer_init();
 	// sanity check, this may influence the performance
-	stop_input_hook();
+	ksu_stop_input_hook_runtime();
+	ksu_selinux_hide_handle_post_fs_data();
 	/* init.rc is read by now, so retire the read hook. Runs in sleepable
 	 * context (init task_work / ksud supercall). */
 	ksu_stop_sys_read_hook();
@@ -84,5 +85,6 @@ void on_boot_completed(void)
      * rename can re-enter the synchronous path with i_rwsem held. */
     track_throne(true);
     ksu_boot_completed = true;
+    ksu_selinux_hide_drop_backup_if_unused();
     ksu_avc_spoof_late_init();
 }
