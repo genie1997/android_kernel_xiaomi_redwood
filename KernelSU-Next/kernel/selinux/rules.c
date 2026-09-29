@@ -212,10 +212,8 @@ static int apply_kernelsu_rules_fn(void *ptr)
     ksu_avc_delta_init(db->p_types.nprim);
 
     ksu_type(db, KERNEL_SU_DOMAIN, "domain");
-    ksu_permissive(db, KERNEL_SU_DOMAIN);
+    // ksu already allows everything, so permissive and the net/bt attributes only widen policy surface
     ksu_typeattribute(db, KERNEL_SU_DOMAIN, "mlstrustedsubject");
-    ksu_typeattribute(db, KERNEL_SU_DOMAIN, "netdomain");
-    ksu_typeattribute(db, KERNEL_SU_DOMAIN, "bluetoothdomain");
 
     // Create unconstrained file type
     ksu_type(db, KERNEL_SU_FILE, "file_type");
