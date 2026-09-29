@@ -1211,7 +1211,7 @@ static bool z_erofs_vle_submit_all(struct super_block *sb,
 	struct z_erofs_unzip_io *q[NR_JOBQUEUES];
 	struct bio *bio;
 	void *bi_private;
-	/* since bio will be NULL, no need to initialize last_index */
+	/* only read once bio holds pages, and assigned by then */
 	pgoff_t last_index;
 	bool force_submit = false;
 	unsigned int nr_bios;
@@ -1248,7 +1248,9 @@ static bool z_erofs_vle_submit_all(struct super_block *sb,
 				     Z_EROFS_PCLUSTER_TAIL_CLOSED);
 
 		first_index = pcl->obj.index;
-		force_submit |= (first_index != last_index + 1);
+		/* flush the pending bio on a non-contiguous block */
+		if (bio && first_index != last_index + 1)
+			force_submit = true;
 
 repeat:
 		page = pickup_page_for_submission(pcl, i, pagepool,
