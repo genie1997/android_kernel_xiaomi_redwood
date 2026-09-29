@@ -891,7 +891,8 @@ static int input_upload_effect(struct input_dev *dev, struct ff_effect *effect,
 	case FF_PERIODIC:
 		if (effect->u.periodic.waveform != FF_CUSTOM) {
 			aw_err("Only support custom waveforms\n");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 
 		if (effect->u.periodic.custom_len == sizeof(custom_data)) {
@@ -902,8 +903,12 @@ static int input_upload_effect(struct input_dev *dev, struct ff_effect *effect,
 				goto out;
 			}
 
-			if (wav_id < 0 && wav_id >= aw_haptic->effect_max)
+			wav_id = custom_data[CUSTOM_DATA_EFFECT_IDX];
+			if (wav_id < 0 || wav_id >= aw_haptic->effect_max) {
+				aw_err("effect id %d out of range", wav_id);
+				ret = -ERANGE;
 				goto out;
+			}
 
 			play_rate_us = aw_haptic->predefined[wav_id].play_rate_us;
 			custom_data[CUSTOM_DATA_TIMEOUT_SEC_IDX] =
