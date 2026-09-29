@@ -23,8 +23,6 @@
 #include "fuse/fuse_i.h"
 #include "mount.h"
 
-DEFINE_STATIC_KEY_FALSE(ksu_init_rc_hook_key_false);
-DEFINE_STATIC_KEY_FALSE(ksu_input_hook_key_false);
 
 extern bool susfs_is_current_ksu_domain(void);
 
@@ -256,7 +254,7 @@ bool __susfs_is_inode_sus_path(struct inode *inode)
 			is_i_uid_not_allowed(fi->inode.i_uid.val)))
 #endif
 		{
-			SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
+			SUSFS_LOGD("hiding path with ino '%lu'\n", inode->i_ino);
 			return true;
 		}
 		return false;
@@ -272,7 +270,7 @@ bool __susfs_is_inode_sus_path(struct inode *inode)
 		is_i_uid_not_allowed(inode->i_uid.val)))
 #endif
 	{
-		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
+		SUSFS_LOGD("hiding path with ino '%lu'\n", inode->i_ino);
 		return true;
 	}
 	return false;
@@ -581,7 +579,7 @@ out_spoof_kstat:
 		if (entry->target_dev == target_dev &&
 			entry->is_fuse == is_fuse)
 		{
-			SUSFS_LOGI("spoofing kstat for path: %s, target_ino: %lu, target_dev: %u\n",
+			SUSFS_LOGD("spoofing kstat for path: %s, target_ino: %lu, target_dev: %u\n",
 					entry->info.target_pathname, target_ino, target_dev);
 			if (entry->info.flags & KSTAT_SPOOF_INO)
 				stat->ino = entry->info.spoofed_ino;
@@ -654,7 +652,7 @@ out_spoof_kstat:
 		if (entry->target_dev == target_dev &&
 			entry->is_fuse == is_fuse)
 		{
-			SUSFS_LOGI("spoofing kstat for target_ino: %lu, target_dev: %u\n", target_ino, target_dev);
+			SUSFS_LOGD("spoofing kstat for target_ino: %lu, target_dev: %u\n", target_ino, target_dev);
 			*out_dev = entry->info.spoofed_dev;
 			*out_ino = entry->info.spoofed_ino;
 			rcu_read_unlock();
@@ -924,7 +922,6 @@ void susfs_add_open_redirect(void __user **user_info) {
 	new_entry_target->target_dev = target_inode->i_sb->s_dev;
 	new_entry_target->redirected_ino = redirected_inode->i_ino;
 	new_entry_target->redirected_dev = redirected_inode->i_sb->s_dev;
-	new_entry_target->info.uid_scheme = info.uid_scheme;
 	new_entry_target->reversed_lookup_only = false;
 	new_entry_target->spoofed_mnt_id = real_mount(target_path.mnt)->mnt_id;
 	(void)vfs_statfs(&target_path, &new_entry_target->spoofed_kstatfs);
@@ -934,10 +931,11 @@ void susfs_add_open_redirect(void __user **user_info) {
 	new_entry_redirected->target_dev = redirected_inode->i_sb->s_dev;
 	new_entry_redirected->redirected_ino = target_inode->i_ino;
 	new_entry_redirected->redirected_dev = target_inode->i_sb->s_dev;
-	new_entry_redirected->info.uid_scheme = info.uid_scheme;
 	new_entry_redirected->reversed_lookup_only = true;
 	new_entry_redirected->spoofed_mnt_id = real_mount(target_path.mnt)->mnt_id;
 	memcpy(&new_entry_redirected->spoofed_kstatfs, &new_entry_target->spoofed_kstatfs, sizeof(struct kstatfs));
+	/* copy the full info first, then swap the two pathnames for the reversed entry */
+	memcpy(&new_entry_redirected->info, &info, sizeof(info));
 	strscpy(new_entry_redirected->info.target_pathname, info.redirected_pathname, sizeof(new_entry_redirected->info.target_pathname));
 	strscpy(new_entry_redirected->info.redirected_pathname, info.target_pathname, sizeof(new_entry_redirected->info.redirected_pathname));
 
@@ -1043,7 +1041,7 @@ struct filename *susfs_open_redirect_spoof_do_sys_openat(struct inode *inode) {
 				default:
 					goto out_srcu_read_unlock;
 			}
-			SUSFS_LOGI("redirect path '%s' to '%s', uid_scheme: %d\n",
+			SUSFS_LOGD("redirect path '%s' to '%s', uid_scheme: %d\n",
 					entry->info.target_pathname, entry->info.redirected_pathname, entry->info.uid_scheme);
 			new_filename = getname_kernel(entry->info.redirected_pathname);
 			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
@@ -1393,12 +1391,11 @@ DEFINE_STATIC_KEY_FALSE(susfs_set_sdcard_android_data_decrypted_key_false);
 
 /* susfs_init */
 void susfs_init(void) {
-	static_branch_enable(&ksu_init_rc_hook_key_false);
-	static_branch_enable(&ksu_input_hook_key_false);
 	static_branch_enable(&susfs_set_sdcard_android_data_decrypted_key_false);
 	static_branch_disable(&susfs_set_uname_key_true);	/* uname spoof off: report the real version */
 	static_branch_disable(&susfs_avc_log_spoofing_key_true);
 	static_branch_disable(&susfs_set_fake_cmdline_or_bootconfig_key_true);
+	static_branch_disable(&susfs_log_key);	/* logging off at boot; the CLI can turn it on to debug */
 	SUSFS_LOGI("susfs is initialized! version: " SUSFS_VERSION " \n");
 }
 

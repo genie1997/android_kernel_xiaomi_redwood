@@ -405,6 +405,29 @@ out_flush:
 #endif
 }
 
+#include <linux/task_work.h>
+#include <linux/slab.h>
+
+/* re-arm avc delta masking after a policy reload, off the sel_write_load path.
+ * apply_kernelsu_rules() takes policy locks and pins the cpu, so it must not run
+ * while fsi->mutex is held; task_work runs it on return to userspace, lock-free. */
+static void ksu_rearm_delta_tw(struct callback_head *head)
+{
+	kfree(head);
+	apply_kernelsu_rules();
+}
+
+void ksu_avc_delta_rearm_deferred(void)
+{
+	struct callback_head *head = kzalloc(sizeof(*head), GFP_ATOMIC);
+
+	if (!head)
+		return;
+	head->func = ksu_rearm_delta_tw;
+	if (task_work_add(current, head, TWA_RESUME))
+		kfree(head);
+}
+
 #define KSU_SEPOLICY_MAX_BATCH_SIZE (8U * 1024U * 1024U)
 #define KSU_SEPOLICY_MAX_ARGS 5
 

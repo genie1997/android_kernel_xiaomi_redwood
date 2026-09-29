@@ -21,6 +21,7 @@
 #include "util.h"
 #include "klog.h" // IWYU pragma: keep
 #include "manager/manager_identity.h"
+#include "policy/allowlist.h"
 #include "compat/kernel_compat.h"
 
 #include "sulog/event.h"
@@ -41,7 +42,7 @@ struct ksu_install_fd_tw {
 static int anon_ksu_release(struct inode *inode, struct file *filp)
 {
     kfree(filp->private_data);
-    pr_info("ksu fd released\n");
+    pr_debug("ksu fd released\n");
     return 0;
 }
 
@@ -87,7 +88,7 @@ static int ksu_install_fd_with_permissions(unsigned int fd_flags, unsigned long 
     }
 
     fd_install(fd, filp);
-    pr_info("ksu fd installed: %d for pid %d\n", fd, current->pid);
+    pr_debug("ksu fd installed: %d for pid %d\n", fd, current->pid);
     return fd;
 }
 
@@ -114,7 +115,7 @@ static void ksu_install_fd_tw_func(struct callback_head *cb)
     struct ksu_install_fd_tw *tw = container_of(cb, struct ksu_install_fd_tw, cb);
     int fd = ksu_install_fd();
 
-    pr_info("[%d] install ksu fd: %d\n", current->pid, fd);
+    pr_debug("[%d] install ksu fd: %d\n", current->pid, fd);
     if (copy_to_user(tw->outp, &fd, sizeof(fd))) {
         pr_err("install ksu fd reply err\n");
         ksu_close_fd(fd);
@@ -194,8 +195,12 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 	// Check if this is a request to install KSU fd
 	if (magic2 == KSU_INSTALL_MAGIC2) {
 		struct ksu_install_fd_tw *tw;
+		uid_t uid = current_uid().val;
 
-		// ksud asks for the fd at its pre-root uid, so this must not gate on uid
+		/* only root, manager or an allowed uid gets the fd; others see nothing */
+		if (uid != 0 && !is_manager() && !ksu_is_allow_uid(uid))
+			return 0;
+
 		tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
 		if (!tw)
 			return 0;

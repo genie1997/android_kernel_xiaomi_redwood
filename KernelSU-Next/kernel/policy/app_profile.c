@@ -87,7 +87,9 @@ void disable_seccomp(void)
      defined(KSU_OPTIONAL_SECCOMP_FILTER_RELEASE))
 	struct task_struct *fake;
 
-	fake = kmalloc(sizeof(*fake), GFP_ATOMIC);
+	/* allocated before the siglock is taken, so a sleeping alloc is fine;
+	 * GFP_ATOMIC could fail under pressure and skip disabling seccomp. */
+	fake = kmalloc(sizeof(*fake), GFP_KERNEL);
 	if (!fake) {
 		pr_err("%s: cannot allocate fake struct!\n", __func__);
 		return;

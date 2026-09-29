@@ -39,25 +39,6 @@ extern struct selinux_state selinux_state;
 // filp->private_data (not page_address), so hand back the page*
 static bool ksu_selinux_hide_is_enabled __read_mostly = true;
 
-static u32 ksu_sid __read_mostly = 0;
-static u32 priv_app_sid __read_mostly = 0;
-
-static int ksu_selinux_get_sids(void)
-{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
-	int err1 = security_context_to_sid("u:r:ksu:s0", strlen("u:r:ksu:s0"), &ksu_sid, GFP_KERNEL);
-    int err2 = security_context_to_sid("u:r:priv_app:s0:c512,c768", 
-                                       strlen("u:r:priv_app:s0:c512,c768"), &priv_app_sid, GFP_KERNEL);
-#else
-	int err1 = security_secctx_to_secid("u:r:ksu:s0", strlen("u:r:ksu:s0"), &ksu_sid);
-	int err2 = security_secctx_to_secid("u:r:priv_app:s0:c512,c768",
-					     strlen("u:r:priv_app:s0:c512,c768"), &priv_app_sid);
-#endif
-	if (!err1) pr_info("ksu_selinux_hide: ksu_sid=%u\n", ksu_sid);
-	if (!err2) pr_info("ksu_selinux_hide: priv_app_sid=%u\n", priv_app_sid);
-	return (!ksu_sid || !priv_app_sid) ? -1 : 0;
-}
-
 static void initialize_fake_status(void)
 {
 	if (READ_ONCE(fake_status))
@@ -120,6 +101,26 @@ static int __nocfi my_sel_open_handle_status(struct inode *inode, struct file *f
 		   ksu_selinux_hide_is_enabled)) {
 		struct page *data = READ_ONCE(fake_status);
 		if (data) {
+#ifdef KSU_COMPAT_USE_SELINUX_STATE
+			struct page *real = selinux_kernel_status_page(&selinux_state);
+#else
+			struct page *real = selinux_kernel_status_page();
+#endif
+			/* track the real counters: libselinux flushes its AVC on a
+			 * policyload/sequence bump, and a frozen copy makes apps miss
+			 * it. Publish only an even sequence, or readers spin forever. */
+			if (real) {
+				struct selinux_kernel_status *rs = page_address(real);
+				struct selinux_kernel_status *fs = page_address(data);
+				u32 seq = READ_ONCE(rs->sequence);
+
+				if (!(seq & 1)) {
+					WRITE_ONCE(fs->policyload, READ_ONCE(rs->policyload));
+					WRITE_ONCE(fs->enforcing, READ_ONCE(rs->enforcing));
+					smp_wmb();
+					WRITE_ONCE(fs->sequence, seq);
+				}
+			}
 			filp->private_data = data;
 			return 0;
 		}

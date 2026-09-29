@@ -1049,18 +1049,6 @@ void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr)
 	ksu_common_newfstat_ret(*fd, (void **)statbuf_ptr, STAT_NATIVE, "sys_newfstat");
 }
 
-#if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
-void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr)
-{
-
-	if (likely(!ksu_vfs_read_hook))
-		return;
-
-	// WARNING: LE-only!!!
-	ksu_common_newfstat_ret(*(unsigned int *)fd, (void **)statbuf_ptr, STAT_STAT64, "sys_fstat64");
-}
-#endif
-
 #endif
 
 void stop_init_rc_hook()

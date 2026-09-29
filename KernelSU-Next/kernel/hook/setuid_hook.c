@@ -29,8 +29,9 @@
 int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 {
     // we rely on the fact that zygote always call setresuid(3) with same uids
+    bool allowed;
 
-    pr_info("handle_setresuid from %d to %d\n", old_uid, new_uid);
+    pr_debug("handle_setresuid from %d to %d\n", old_uid, new_uid);
 
     if (unlikely(is_uid_manager(new_uid))) {
 
@@ -39,7 +40,8 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
             ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
         }
 #else
-		disable_seccomp();
+		/* keep the app's filter (mode 2), just let its reboot knock through */
+		set_thread_flag(TIF_KSU_ALLOW_REBOOT);
 #endif
 
 #ifdef KSU_KPROBES_HOOK
@@ -56,13 +58,17 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
         return 0;
     }
 
-    if (ksu_is_allow_uid_for_current(new_uid)) {
+    /* single allowlist walk, reused by the susfs no_su gate below */
+    allowed = ksu_is_allow_uid_for_current(new_uid);
+
+    if (allowed) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
         if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
             ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
         }
 #else
-		disable_seccomp();
+		/* keep the app's filter (mode 2), just let its reboot knock through */
+		set_thread_flag(TIF_KSU_ALLOW_REBOOT);
 #endif
 
 #ifdef KSU_KPROBES_HOOK
@@ -81,7 +87,7 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
     /* flag whether this uid is root-allowed (the per-app susfs layer gates on
      * it). Thread flags survive fork/exec, so set on one branch and clear on the
      * other, to stay in step with a grant or revoke. */
-    if (!ksu_is_allow_uid_for_current(new_uid)) {
+    if (!allowed) {
         susfs_set_current_proc_no_su();
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
         // re-flag sus_path_loop entries; skip the queue when none are armed

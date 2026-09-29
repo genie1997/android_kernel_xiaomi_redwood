@@ -127,7 +127,12 @@ static inline struct hlist_head *mp_hash(struct dentry *dentry)
 
 static int mnt_alloc_id(struct mount *mnt)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* stay below the susfs range; mnt_free_id() routes by that boundary */
+	int res = ida_alloc_max(&mnt_id_ida, DEFAULT_KSU_MNT_ID - 1, GFP_KERNEL);
+#else
 	int res = ida_alloc(&mnt_id_ida, GFP_KERNEL);
+#endif
 
 	if (res < 0)
 		return res;
@@ -168,7 +173,8 @@ static int mnt_alloc_group_id(struct mount *mnt)
 		res = ida_alloc_min(&susfs_mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL);
 		goto bypass_orig_flow;
 	}
-	res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
+	/* stay below the susfs group range for mnt_release_group_id() */
+	res = ida_alloc_range(&mnt_group_ida, 1, DEFAULT_KSU_MNT_GROUP_ID - 1, GFP_KERNEL);
 bypass_orig_flow:
 #else
 	int res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
@@ -290,7 +296,7 @@ static struct mount *susfs_alloc_non_unshare_ksu_vfsmnt(const char *name)
 	int res;
 
 	if (mnt) {
-		res = ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL);;
+		res = ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL);
 		if (res < 0) {
 			goto out_free_cache;
 		}

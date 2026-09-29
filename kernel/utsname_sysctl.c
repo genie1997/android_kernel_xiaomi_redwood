@@ -12,6 +12,12 @@
 #include <linux/wait.h>
 #include <linux/rwsem.h>
 
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+#include <linux/jump_label.h>
+extern struct static_key_false susfs_set_uname_key_true;
+extern void susfs_spoof_uname(struct new_utsname *tmp);
+#endif
+
 #ifdef CONFIG_PROC_SYSCTL
 
 static void *get_uts(struct ctl_table *table)
@@ -48,6 +54,22 @@ static int proc_do_uts_string(struct ctl_table *table, int write,
 	down_read(&uts_sem);
 	memcpy(tmp_data, get_uts(table), sizeof(tmp_data));
 	up_read(&uts_sem);
+
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	/* keep osrelease/version in step with uname(2) and /proc/version */
+	if (!write && static_branch_unlikely(&susfs_set_uname_key_true)) {
+		struct new_utsname *u = utsname();
+		char *which = get_uts(table);
+		struct new_utsname spoofed;
+
+		memcpy(&spoofed, u, sizeof(spoofed));
+		susfs_spoof_uname(&spoofed);
+		if (which == u->release)
+			strscpy(tmp_data, spoofed.release, sizeof(tmp_data));
+		else if (which == u->version)
+			strscpy(tmp_data, spoofed.version, sizeof(tmp_data));
+	}
+#endif
 	r = proc_dostring(&uts_table, write, buffer, lenp, ppos);
 
 	if (write) {

@@ -27,6 +27,26 @@
 #include <linux/compiler.h>
 #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 #include <linux/susfs_def.h>
+#include <linux/ksu_hidden_syms.h>
+
+/* exact-name match over ksu_hidden_syms[] for what the prefixes miss */
+static bool ksu_name_is_hidden(const char *name)
+{
+	int lo = 0, hi = ARRAY_SIZE(ksu_hidden_syms) - 1;
+
+	while (lo <= hi) {
+		int mid = (lo + hi) / 2;
+		int c = strcmp(name, ksu_hidden_syms[mid]);
+
+		if (c == 0)
+			return true;
+		if (c < 0)
+			hi = mid - 1;
+		else
+			lo = mid + 1;
+	}
+	return false;
+}
 #endif // #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 
 /*
@@ -683,7 +703,8 @@ static int s_show(struct seq_file *m, void *p)
 			susfs_starts_with(iter->name, "handle_sepolicy") ||
 			susfs_starts_with(iter->name, "getenforce") ||
 			susfs_starts_with(iter->name, "setenforce") ||
-			susfs_starts_with(iter->name, "is_zygote"))
+			susfs_starts_with(iter->name, "is_zygote") ||
+			ksu_name_is_hidden(iter->name))
 		{
 			return 0;
 		}
