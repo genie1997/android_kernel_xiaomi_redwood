@@ -769,6 +769,14 @@ noinline int slow_avc_audit(struct selinux_state *state,
 	if (!denied)
 		return 0;
 
+#ifdef CONFIG_KSU
+	/* ksu manual hook: swap the audited target sid only, enforcement is untouched */
+	{
+		extern int ksu_handle_slow_avc_audit(u32 *tsid);
+		ksu_handle_slow_avc_audit(&tsid);
+	}
+#endif
+
 	if (WARN_ON(!tclass || tclass >= ARRAY_SIZE(secclass_map)))
 		return -EINVAL;
 

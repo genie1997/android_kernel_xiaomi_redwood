@@ -841,6 +841,7 @@ free_trans_pre57:
 static bool add_genfscon(struct policydb *db, const char *fs_name,
                          const char *path, const char *context)
 {
+    pr_warn_once("ksu: genfscon is not supported\n");
     return false;
 }
 

@@ -58,6 +58,12 @@ static int avc_spoof_feature_set(u64 value)
 	return 0;
 }
 
+/* let the susfs avc-log-spoofing command drive the same toggle */
+void ksu_avc_spoof_set_enabled(bool enable)
+{
+	avc_spoof_feature_set(enable ? 1 : 0);
+}
+
 static const struct ksu_feature_handler avc_spoof_handler = {
 	.feature_id = KSU_FEATURE_AVC_SPOOF,
 	.name = "avc_spoof",

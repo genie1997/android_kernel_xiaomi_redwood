@@ -40,6 +40,11 @@ extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
 			void *envp, int *flags)
 {
+	if (current->pid != 1 && filename_ptr && !IS_ERR_OR_NULL(*filename_ptr) &&
+	    is_init(current_cred()))
+		ksu_adb_root_handle_execve_manual((*filename_ptr)->name,
+						  (struct user_arg_ptr *)envp);
+
 	ksu_handle_execveat_ksud(fd, filename_ptr,
 				 (struct user_arg_ptr *)argv,
 				 (struct user_arg_ptr *)envp, flags);

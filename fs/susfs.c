@@ -1236,9 +1236,15 @@ void susfs_set_avc_log_spoofing(void __user **user_info) {
 
 	if (info.enabled) {
 		static_branch_enable(&susfs_avc_log_spoofing_key_true);
+#ifdef CONFIG_KSU
+		{ extern void ksu_avc_spoof_set_enabled(bool); ksu_avc_spoof_set_enabled(true); }
+#endif
 		SUSFS_LOGI("enabling susfs_avc_log_spoofing\n");
 	} else {
 		static_branch_disable(&susfs_avc_log_spoofing_key_true);
+#ifdef CONFIG_KSU
+		{ extern void ksu_avc_spoof_set_enabled(bool); ksu_avc_spoof_set_enabled(false); }
+#endif
 		SUSFS_LOGI("disabling susfs_avc_log_spoofing\n");
 	}
 
@@ -1329,6 +1335,10 @@ void susfs_get_enabled_features(void __user **user_info) {
 	if (info->err) goto out_copy_to_user;
 	buf_ptr = info->enabled_features + copied_size;
 #endif
+
+	info->err = copy_config_to_buf("SUSFS_AVC_LOG_SPOOFING\n", buf_ptr, &copied_size, SUSFS_ENABLED_FEATURES_SIZE);
+	if (info->err) goto out_copy_to_user;
+	buf_ptr = info->enabled_features + copied_size;
 
 	info->err = 0;
 out_copy_to_user:

@@ -258,9 +258,16 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 		return 0;
 
 	pr_info("do_execveat_common su found\n");
-	memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
+	ksu_compat_sulog('x');
+	{
+		struct ksu_sulog_pending_event *pending =
+			ksu_sulog_capture_sucompat(filename->uptr, NULL, GFP_KERNEL);
+		long ret;
 
-	escape_with_root_profile();
+		memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
+		ret = escape_with_root_profile();
+		ksu_sulog_emit_pending(pending, ret, GFP_KERNEL);
+	}
 
 	return 0;
 }
