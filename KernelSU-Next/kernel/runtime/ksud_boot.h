@@ -13,5 +13,6 @@ int nuke_ext4_sysfs(const char* mnt);
 
 extern bool ksu_module_mounted;
 extern bool ksu_boot_completed;
+extern bool ksu_throne_first_done;
 
 #endif // __KSU_H_KSUD_BOOT

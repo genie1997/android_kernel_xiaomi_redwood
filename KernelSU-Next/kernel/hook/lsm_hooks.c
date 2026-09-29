@@ -75,9 +75,9 @@ static int ksu_inode_rename(struct inode *old_dir, struct dentry *old_dentry,
 		return 0;
 	}
 
-	// Do not track anything until the system has fully booted.
+	// Do not track anything until the first scan has been consumed.
 	// Parsing files during early boot from an LSM hook can causes VFS deadlocks
-	if (!ksu_boot_completed) {
+	if (!smp_load_acquire(&ksu_throne_first_done)) {
 		return 0;
 	}
 

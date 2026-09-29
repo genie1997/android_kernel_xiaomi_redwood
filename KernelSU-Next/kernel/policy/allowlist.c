@@ -35,6 +35,9 @@
 
 static DEFINE_MUTEX(allowlist_mutex);
 
+// the prune rewrites the on disk list, so never prune a list that was not fully read
+static bool allow_list_loaded = false;
+
 // default profiles, these may be used frequently, so we cache it
 static struct root_profile default_root_profile;
 static struct non_root_profile default_non_root_profile;
@@ -562,6 +565,8 @@ void ksu_load_allow_list()
 	fp = filp_open(KERNEL_SU_ALLOWLIST, O_RDONLY, 0);
 	if (IS_ERR(fp)) {
 		pr_err("load_allow_list open file failed: %ld\n", PTR_ERR(fp));
+		// no file is not a truncation, nothing to lose, so let the prune run
+		allow_list_loaded = true;
 		return;
 	}
 
@@ -606,6 +611,10 @@ void ksu_load_allow_list()
 	}
 	ksu_show_allow_list();
 	filp_close(fp, 0);
+	// ret == 0 is a clean EOF; a short read leaves it non-zero and disables the prune
+	allow_list_loaded = (ret == 0);
+	if (!allow_list_loaded)
+		pr_warn("allowlist truncated, prune disabled for this boot\n");
 	if (version < KSU_APP_PROFILE_VER)
 		ksu_persistent_allow_list();
 	return;
@@ -624,6 +633,12 @@ void ksu_prune_allowlist(bool (*is_uid_valid)(uid_t, char *, void *),
 
     if (!ksu_boot_completed) {
         pr_info("boot not completed, skip prune\n");
+        return;
+    }
+
+    // the prune persists, so a partial load would write the truncation back to disk
+    if (!allow_list_loaded) {
+        pr_info("allowlist not fully loaded, skip prune\n");
         return;
     }
 

@@ -91,7 +91,8 @@ $(info -- KernelSU-Next Git repo detected at: $(GIT_ROOT))
 endif
 endif
 
-# Git-derived version never runs here. Pin it: 30000 + commit count + 289.
+# Git version never runs here. Pin it: 30000 + commit count + 289 = 33296 at legacy HEAD.
+# Tag stays v3.4.0-legacy, the string the manager shows and the manager that pairs here.
 KSU_VERSION_OVERRIDE ?= 33296
 KSU_VERSION_TAG_OVERRIDE ?= v3.4.0-legacy
 

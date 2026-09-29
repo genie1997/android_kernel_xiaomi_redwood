@@ -84,8 +84,9 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
     if (!ksu_is_allow_uid_for_current(new_uid)) {
         susfs_set_current_proc_no_su();
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        // re-flag this app's sus_path_loop entries; deferred off the setuid path
-        schedule_work(&susfs_extra_works);
+        // re-flag sus_path_loop entries; skip the queue when none are armed
+        if (static_branch_unlikely(&susfs_sus_path_key))
+            schedule_work(&susfs_extra_works);
 #endif
     } else {
         susfs_clear_current_proc_no_su();

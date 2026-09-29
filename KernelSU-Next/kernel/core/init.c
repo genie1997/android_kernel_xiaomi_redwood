@@ -171,6 +171,8 @@ int __init kernelsu_init(void)
 
 		ksu_boot_completed = true;
 		track_throne(false);
+		/* release, as in on_boot_completed() */
+		smp_store_release(&ksu_throne_first_done, true);
 
 		if (!getenforce()) {
 			pr_info("Permissive SELinux, enforcing\n");
@@ -219,8 +221,6 @@ void __exit kernelsu_exit(void)
 	ksu_throne_tracker_exit();
 
 	ksu_allowlist_exit();
-
-	ksu_selinux_hide_exit();
 
 	ksu_sulog_exit();
 

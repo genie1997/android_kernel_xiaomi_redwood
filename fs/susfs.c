@@ -42,9 +42,12 @@ static inline void susfs_set_inode_flag(struct inode *inode, int bit)
 DEFINE_STATIC_KEY_TRUE(susfs_log_key);
 #define SUSFS_LOGI(fmt, ...) if (static_branch_likely(&susfs_log_key)) pr_info("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
 #define SUSFS_LOGE(fmt, ...) if (static_branch_likely(&susfs_log_key)) pr_err("susfs:[%u][%d][%s]" fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
+// debug level, the re-flag runs per app spawn and would flood at info
+#define SUSFS_LOGD(fmt, ...) if (static_branch_likely(&susfs_log_key)) pr_debug("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
 #else
 #define SUSFS_LOGI(fmt, ...)
 #define SUSFS_LOGE(fmt, ...)
+#define SUSFS_LOGD(fmt, ...)
 #endif
 
 /* sus_path */
@@ -190,14 +193,17 @@ void susfs_run_sus_path_loop(void) {
 				}
 				susfs_set_inode_flag(&fi->inode, AS_FLAGS_SUS_PATH);
 				susfs_set_inode_flag(inode, AS_FLAGS_SUS_PATH);
-				SUSFS_LOGI("re-flag AS_FLAGS_SUS_PATH on path '%s', fi->inode.i_ino: '%lu', fi->inode.i_state: 0x%lx\n",
+				SUSFS_LOGD("re-flag AS_FLAGS_SUS_PATH on path '%s', fi->inode.i_ino: '%lu', fi->inode.i_state: 0x%lx\n",
 						cursor->target_pathname, fi->inode.i_ino, fi->inode.i_state);
 			} else {
 				susfs_set_inode_flag(inode, AS_FLAGS_SUS_PATH);
-				SUSFS_LOGI("re-flag AS_FLAGS_SUS_PATH on path '%s', inode->i_ino: '%lu', inode->i_state: 0x%lx\n",
+				SUSFS_LOGD("re-flag AS_FLAGS_SUS_PATH on path '%s', inode->i_ino: '%lu', inode->i_state: 0x%lx\n",
 						cursor->target_pathname, inode->i_ino, inode->i_state);
 			}
 			path_put(&path);
+		} else {
+			// path no longer resolves, so it stays unflagged and visible
+			SUSFS_LOGD("kern_path('%s') failed\n", cursor->target_pathname);
 		}
 	}
 	srcu_read_unlock(&susfs_srcu_sus_path_loop, srcu_idx);

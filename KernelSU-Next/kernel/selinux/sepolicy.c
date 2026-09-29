@@ -16,26 +16,59 @@
 
 #define KSU_SUPPORT_ADD_TYPE
 
-// record every allow bit we add over the base policy (added types are
-// handled separately, via ksu_type_value_is_added)
+// allow bits we add over the base policy; added types go via ksu_type_value_is_added
+// 2048 nominal rules is 1024 slots, an 8 KB table instead of 32 KB at 8192
+#define KSU_DELTA_AVTAB_RULES 2048
+
 static struct avtab ksu_delta_avtab;
 bool ksu_avc_delta_ready = false;
 static u32 ksu_avc_genuine_ntypes;
+
+// alloc the table here, from sleepable context, before the caller takes the policy lock
+int ksu_avc_delta_prealloc(void)
+{
+    if (ksu_avc_delta_ready || ksu_delta_avtab.htable)
+        return 0;
+    avtab_init(&ksu_delta_avtab);
+    if (avtab_alloc(&ksu_delta_avtab, KSU_DELTA_AVTAB_RULES)) {
+        avtab_destroy(&ksu_delta_avtab);
+        return -ENOMEM;
+    }
+    return 0;
+}
 
 void ksu_avc_delta_init(u32 genuine_ntypes)
 {
     if (ksu_avc_delta_ready)
         return;
-    if (avtab_init(&ksu_delta_avtab))
-        return;
-    if (avtab_alloc(&ksu_delta_avtab, 8192)) {
-        avtab_destroy(&ksu_delta_avtab);
+    if (!ksu_delta_avtab.htable) {
+        pr_err("avc delta table was not preallocated\n");
         return;
     }
     ksu_avc_genuine_ntypes = genuine_ntypes;
-    smp_wmb();
-    ksu_avc_delta_ready = true;
-    pr_info("ksu: avc delta table ready (genuine_ntypes=%u)\n", genuine_ntypes);
+    // release so a reader that sees ready also sees the type count
+    smp_store_release(&ksu_avc_delta_ready, true);
+    pr_info("avc delta table ready (genuine_ntypes=%u)\n", genuine_ntypes);
+}
+
+// prints how full the table got, to size KSU_DELTA_AVTAB_RULES
+void ksu_avc_delta_report(void)
+{
+    if (!ksu_avc_delta_ready)
+        return;
+    pr_info("avc delta table holds %u entries in %u slots\n",
+            ksu_delta_avtab.nel, ksu_delta_avtab.nslot);
+}
+
+// a policy reload restamps every type value, so stop masking rather than mask wrong
+void ksu_avc_delta_reset(void)
+{
+    if (!ksu_avc_delta_ready)
+        return;
+    // leave the table allocated, a reader may be walking it under the read lock
+    ksu_avc_delta_ready = false;
+    ksu_avc_genuine_ntypes = 0;
+    pr_warn("policy reloaded, avc delta masking disabled\n");
 }
 
 static void ksu_avc_delta_add(u32 stype, u32 ttype, u16 tclass, u32 bits)
@@ -63,7 +96,9 @@ static void ksu_avc_delta_add(u32 stype, u32 ttype, u16 tclass, u32 bits)
  * /proc/self/attr/current query paths. */
 bool ksu_type_value_is_added(u32 type_value)
 {
-    return ksu_avc_delta_ready && type_value > ksu_avc_genuine_ntypes;
+    if (!smp_load_acquire(&ksu_avc_delta_ready))
+        return false;
+    return type_value > ksu_avc_genuine_ntypes;
 }
 
 /* Direct (single key) lookup. Attribute expansion is done by the caller
@@ -825,7 +860,8 @@ static bool add_type(struct policydb *db, const char *type_name, bool attr)
         return true;
     }
 
-    u32 value = ++db->p_types.nprim;
+    // raise nprim only after every step succeeds, or compute_av indexes a slot that has no datum
+    u32 value = db->p_types.nprim + 1;
     type = (struct type_datum *)kzalloc(sizeof(struct type_datum), GFP_KERNEL);
     if (!type) {
         pr_err("add_type: alloc type_datum failed.\n");
@@ -839,11 +875,7 @@ static bool add_type(struct policydb *db, const char *type_name, bool attr)
     char *key = kstrdup(type_name, GFP_KERNEL);
     if (!key) {
         pr_err("add_type: alloc key failed.\n");
-        return false;
-    }
-
-    if (symtab_insert(&db->p_types, key, type)) {
-        pr_err("add_type: insert symtab failed.\n");
+        kfree(type);
         return false;
     }
 
@@ -854,8 +886,10 @@ static bool add_type(struct policydb *db, const char *type_name, bool attr)
 
     if (!new_type_attr_map_array) {
         pr_err("add_type: alloc type_attr_map_array failed\n");
-        return false;
+        goto free_datum;
     }
+    // kvrealloc frees the old buffer, so publish each array before the next grow can fail
+    db->type_attr_map_array = new_type_attr_map_array;
 
     struct type_datum **new_type_val_to_struct =
         ksu_kvrealloc(db->type_val_to_struct,
@@ -864,25 +898,31 @@ static bool add_type(struct policydb *db, const char *type_name, bool attr)
 
     if (!new_type_val_to_struct) {
         pr_err("add_type: alloc type_val_to_struct failed\n");
-        return false;
+        goto free_datum;
     }
+    db->type_val_to_struct = new_type_val_to_struct;
 
     char **new_val_to_name_types =
         ksu_kvrealloc(db->sym_val_to_name[SYM_TYPES], sizeof(char *) * value,
                     sizeof(char *) * (value - 1));
     if (!new_val_to_name_types) {
         pr_err("add_type: alloc val_to_name failed\n");
-        return false;
+        goto free_datum;
+    }
+    db->sym_val_to_name[SYM_TYPES] = new_val_to_name_types;
+
+    // last failable step: a symtab entry cannot be taken back
+    if (symtab_insert(&db->p_types, key, type)) {
+        pr_err("add_type: insert symtab failed.\n");
+        goto free_datum;
     }
 
-    db->type_attr_map_array = new_type_attr_map_array;
+    db->p_types.nprim = value;
     ebitmap_init(&db->type_attr_map_array[value - 1]);
     ebitmap_set_bit(&db->type_attr_map_array[value - 1], value - 1, 1);
 
-    db->type_val_to_struct = new_type_val_to_struct;
     db->type_val_to_struct[value - 1] = type;
 
-    db->sym_val_to_name[SYM_TYPES] = new_val_to_name_types;
     db->sym_val_to_name[SYM_TYPES][value - 1] = key;
 
     int i;
@@ -892,11 +932,27 @@ static bool add_type(struct policydb *db, const char *type_name, bool attr)
     }
 
     return true;
+
+free_datum:
+    // arrays may be left a slot oversized, harmless since nprim never names it
+    kfree(key);
+    kfree(type);
+    return false;
 #elif defined(CONFIG_IS_HW_HISI)
 	/*
    * Huawei use type_attr_map and type_val_to_struct.
    * And use ebitmap not flex_array.
    */
+
+	// this branch sizes from nprim and indexes value - 1, so raise and insert up front
+	if (symtab_insert(&db->p_types, key, type)) {
+		pr_err("add_type: insert symtab failed.\n");
+		kfree(key);
+		kfree(type);
+		return false;
+	}
+	db->p_types.nprim = value;
+
 	size_t new_size = sizeof(struct ebitmap) * db->p_types.nprim;
 	struct ebitmap *new_type_attr_map =
 		(krealloc(db->type_attr_map, new_size, GFP_KERNEL));
@@ -943,6 +999,15 @@ static bool add_type(struct policydb *db, const char *type_name, bool attr)
 
 	return true;
 #else
+	// as in the HISI branch, raise and insert up front
+	if (symtab_insert(&db->p_types, key, type)) {
+		pr_err("add_type: insert symtab failed.\n");
+		kfree(key);
+		kfree(type);
+		return false;
+	}
+	db->p_types.nprim = value;
+
 	// flex_array is not extensible, we need to create a new bigger one instead
 	struct flex_array *new_type_attr_map_array =
 		flex_array_alloc(sizeof(struct ebitmap), db->p_types.nprim,

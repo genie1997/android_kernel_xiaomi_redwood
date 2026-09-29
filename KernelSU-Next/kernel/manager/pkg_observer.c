@@ -8,6 +8,7 @@
 #include <linux/version.h>
 #include "klog.h" // IWYU pragma: keep
 #include "throne_tracker.h"
+#include "runtime/ksud_boot.h"
 
 #define MASK_SYSTEM (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
 
@@ -27,6 +28,9 @@ static KSU_DECL_FSNOTIFY_OPS(ksu_handle_inode_event)
 	if (!file_name)
 		return 0;
 	if (mask & FS_ISDIR)
+		return 0;
+	// wait for the first scan; fsnotify_move runs under an i_rwsem the sync scan would retake
+	if (!smp_load_acquire(&ksu_throne_first_done))
 		return 0;
 	if (ksu_fname_len(file_name) == 13 &&
 	    !memcmp(ksu_fname_arg(file_name), "packages.list", 13)) {

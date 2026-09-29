@@ -136,9 +136,8 @@ static int patch_fops_slot(void *slot_addr, void *new_fn)
 	unsigned long base = addr & PAGE_MASK;
 	unsigned long offset = addr & ~PAGE_MASK;
 	
-	struct page *page = phys_to_page(__pa(base));
-	if (!page)
-		return -EFAULT;
+	// __pa_symbol for a .rodata slot; __pa WARNs under DEBUG_VIRTUAL and this cannot be NULL
+	struct page *page = phys_to_page(__pa_symbol(base));
 
 void *writable_addr = vmap(&page, 1, VM_MAP, PAGE_KERNEL);
 	if (!writable_addr)
@@ -196,8 +195,13 @@ static void hook_selinux_status_open(void)
 		return;
 	}
 	
+	// set orig first so the hook can call through; the toggle reads it as the witness
 	orig_sel_open_handle_status = ops->open;
-	patch_fops_slot(&ops->open, my_sel_open_handle_status);
+	if (patch_fops_slot(&ops->open, my_sel_open_handle_status)) {
+		orig_sel_open_handle_status = NULL;
+		pr_err("ksu_selinux_hide: could not patch sel_handle_status_ops->open\n");
+		return;
+	}
 	pr_info("ksu_selinux_hide: hooked sel_handle_status_ops->open\n");
 }
 
@@ -243,24 +247,20 @@ static __nocfi ssize_t my_selinux_transaction_write(struct file *file, const cha
 	 */
 	if (size != 0 && size <= 128) {
 		char scon[129];
+		size_t len = size;
 
-		if (copy_from_user(scon, buf, size)) {
-			scon[0] = '\0';
-			size = 0;
-		} else {
-			while (size && (scon[size - 1] == '\n' || scon[size - 1] == '\0'))
-				scon[--size] = '\0';
-		}
-		/*
-		 * size == 128 fills scon[0..127] with no terminator left, so the
-		 * pr_info("%s") below would walk past the end of the array and
-		 * log adjacent stack memory. Terminate unconditionally.
-		 */
-		scon[128] = '\0';
+		/* let the real handler report the fault, do not turn it into EINVAL */
+		if (copy_from_user(scon, buf, len))
+			goto pass_through;
 
-		if (size && (!strncmp(scon, "u:r:su:", 7) ||
-			     !strncmp(scon, "u:r:su_system:", 14) ||
-			     !strncmp(scon, "u:r:ksu:", 8))) {
+		// terminate at the copied length, else the pr_info below logs uninitialised stack
+		scon[len] = '\0';
+		while (len && (scon[len - 1] == '\n' || scon[len - 1] == '\0'))
+			scon[--len] = '\0';
+
+		if (len && (!strncmp(scon, "u:r:su:", 7) ||
+			    !strncmp(scon, "u:r:su_system:", 14) ||
+			    !strncmp(scon, "u:r:ksu:", 8))) {
 			pr_info("ksu_selinux_hide: blocked root context check %s from uid=%d\n",
 				scon, current_uid().val);
 			return -EINVAL;
@@ -287,9 +287,14 @@ static void hook_selinux_transaction_write(void)
 		return;
 	}
 
+	// the six selinuxfs transaction nodes share transaction_ops, so this covers all of them
 	orig_selinux_transaction_write = ops->write;
-	patch_fops_slot(&ops->write, my_selinux_transaction_write);
-	pr_info("ksu_selinux_hide: hooked context ops->write\n");
+	if (patch_fops_slot(&ops->write, my_selinux_transaction_write)) {
+		orig_selinux_transaction_write = NULL;
+		pr_err("ksu_selinux_hide: could not patch transaction ops->write\n");
+		return;
+	}
+	pr_info("ksu_selinux_hide: hooked transaction ops->write (6 nodes)\n");
 }
 
 static void unhook_selinux_transaction_write(void)
@@ -337,9 +342,8 @@ static int selinux_hide_status_feature_set(u64 value)
 {
 	bool enable = !!value;
 
-	/* the spoof only installs at early boot, so refuse a runtime enable that
-	 * would report it active while nothing is hidden. Disable stays allowed. */
-	if (enable && !ksu_selinux_hide_is_enabled)
+	// refuse an enable when the fop was never patched, else it reports active while nothing hides
+	if (enable && !orig_sel_open_handle_status)
 		return -EOPNOTSUPP;
 
 	if (enable == ksu_selinux_hide_is_enabled) {
@@ -409,10 +413,6 @@ void __exit ksu_selinux_hide_exit(void)
 	ksu_unregister_feature_handler(KSU_FEATURE_SELINUX_HIDE);
 	unhook_selinux_status_open();
 	unhook_selinux_transaction_write();
-	mutex_lock(&fake_status_init_mutex);
-	if (fake_status) {
-		__free_page(fake_status);
-		fake_status = NULL;
-	}
-	mutex_unlock(&fake_status_init_mutex);
+	// leak fake_status on purpose: apps still map it via remap_pfn_range with no refcount.
+	// unloading is unsafe anyway (a task may be inside the hook), so assume a built in build.
 }

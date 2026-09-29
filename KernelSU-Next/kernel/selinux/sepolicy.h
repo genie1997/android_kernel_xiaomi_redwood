@@ -45,7 +45,10 @@ bool ksu_genfscon(struct policydb *db, const char *fs_name, const char *path,
 
 // compute_av delta table (userspace av-query reconciliation), defined in sepolicy.c
 extern bool ksu_avc_delta_ready;
+int ksu_avc_delta_prealloc(void);
 void ksu_avc_delta_init(u32 genuine_ntypes);
+void ksu_avc_delta_reset(void);
+void ksu_avc_delta_report(void);
 bool ksu_type_value_is_added(u32 type_value);
 u32 ksu_avc_delta_lookup(u32 stype, u32 ttype, u16 tclass);
 

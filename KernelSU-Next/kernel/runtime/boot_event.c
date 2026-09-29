@@ -15,6 +15,7 @@
 
 bool ksu_module_mounted __read_mostly = false;
 bool ksu_boot_completed __read_mostly = false;
+bool ksu_throne_first_done __read_mostly = false;
 extern void ksu_stop_sys_read_hook(void);
 
 extern void ksu_avc_spoof_late_init();
@@ -81,10 +82,11 @@ void on_module_mounted(void)
 void on_boot_completed(void)
 {
     pr_info("on_boot_completed!\n");
-    /* Raise the flag only after the first track_throne(), or a packages.list
-     * rename can re-enter the synchronous path with i_rwsem held. */
-    track_throne(true);
+    /* the prune bails while this is false, so raise it before the first run */
     ksu_boot_completed = true;
+    track_throne(true);
+    // first run consumed, hooks may track now; release so they never see this before it
+    smp_store_release(&ksu_throne_first_done, true);
     ksu_selinux_hide_drop_backup_if_unused();
     ksu_avc_spoof_late_init();
 }

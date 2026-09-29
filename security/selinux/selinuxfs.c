@@ -46,6 +46,7 @@
 extern bool ksu_mask_compute_av_for_caller(void);
 extern u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass);
 extern bool ksu_sid_is_ksu_added_type(u32 sid);
+extern void ksu_avc_delta_reset(void);
 #endif
 
 enum sel_inos {
@@ -581,6 +582,11 @@ static ssize_t sel_write_load(struct file *file, const char __user *buf,
 		pr_warn_ratelimited("SELinux: failed to load policy\n");
 		goto out;
 	}
+
+#ifdef CONFIG_KSU
+	/* the delta table is keyed on the old policydb's type values */
+	ksu_avc_delta_reset();
+#endif
 
 	length = sel_make_policy_nodes(fsi);
 	if (length)

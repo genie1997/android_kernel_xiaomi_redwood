@@ -321,6 +321,10 @@ void apply_kernelsu_rules()
 {
 	struct policydb *db;
 
+	/* allocate before any lock is taken; see ksu_avc_delta_prealloc() */
+	if (ksu_avc_delta_prealloc())
+		pr_err("avc delta prealloc failed, compute_av masking stays off\n");
+
 	if (!getenforce()) {
 		pr_info("SELinux permissive or disabled, apply rules!\n");
 	}
@@ -345,6 +349,8 @@ void apply_kernelsu_rules()
 out_unlock:
 	mutex_unlock(&selinux_state.policy_mutex);
 #else
+	// one policy writer at a time; the holder can sleep while others spin in write_lock
+	mutex_lock(&ksu_rules);
 
 	cpumask_t old_mask;
 	db = get_policydb();
@@ -396,6 +402,8 @@ do_stop_machine:
 out_flush:
 	smp_mb();
 	reset_avc_cache();
+	ksu_avc_delta_report();
+	mutex_unlock(&ksu_rules);
 #endif
 }
 
@@ -865,6 +873,9 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
 		pr_info("SELinux permissive or disabled when handle policy!\n");
 	}
 
+	// one policy writer at a time, as in apply_kernelsu_rules()
+	mutex_lock(&ksu_rules);
+
 	struct handle_sepolicy_args ctx = { 0 };
 	ctx.ctx_success_cmd_count = (void *)&success_cmd_count;
 	ctx.ctx_payload = (void *)payload;
@@ -920,6 +931,8 @@ out_done:
 	reset_avc_cache();
 	if (!ret)
 		ret = success_cmd_count;
+
+	mutex_unlock(&ksu_rules);
 
 out_free:
 	kvfree(payload);
