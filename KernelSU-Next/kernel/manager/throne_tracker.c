@@ -254,6 +254,11 @@ static bool is_lock_held(const char *path)
 	return false;
 }
 
+/* 10 x 100ms covered ~1s after post-fs-data, but packages.list is not
+ * readable until system_server has settled. Keep the fast cadence for the
+ * first second, then fall back to 1s and cover a cold boot. */
+#define KSU_THRONE_MAX_RETRIES 130
+
 struct ksu_throne_work_data {
 	struct delayed_work dwork;
 	bool prune_only;
@@ -379,14 +384,18 @@ static void ksu_throne_work_fn(struct work_struct *work)
 	revert_creds(saved_cred);
 	mutex_unlock(&throne_tracker_mutex);
 
-	if (!success && data->retries < 10) {
+	if (!success && data->retries < KSU_THRONE_MAX_RETRIES) {
+		unsigned long delay = data->retries < 10 ? 100 : 1000;
+
 		data->retries++;
-		pr_info("throne_tracker: retrying (%d/10) in 100ms...\n", data->retries);
+		pr_debug("throne_tracker: retrying (%d/%d) in %lums...\n",
+			 data->retries, KSU_THRONE_MAX_RETRIES, delay);
 		// Reschedule exactly this work instance
-		schedule_delayed_work(&data->dwork, msecs_to_jiffies(100));
+		schedule_delayed_work(&data->dwork, msecs_to_jiffies(delay));
 	} else {
 		if (!success) {
-			pr_warn("throne_tracker: giving up after 10 retries.\n");
+			pr_warn("throne_tracker: giving up after %d retries.\n",
+				data->retries);
 		}
 		data->retries = 0; // Resets for future triggers
 	}

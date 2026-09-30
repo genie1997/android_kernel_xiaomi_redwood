@@ -32,6 +32,11 @@ void on_post_fs_data(void)
 
 	ksu_load_allow_list();
 	ksu_observer_init();
+	/* first search runs here: init task_work holds no VFS lock, so the sync
+	 * scan cannot re-enter one, and the flag has to be up before Android's
+	 * own boot-time packages.list writes arrive */
+	track_throne(false);
+	smp_store_release(&ksu_throne_first_done, true);
 	// sanity check, this may influence the performance
 	ksu_stop_input_hook_runtime();
 	ksu_selinux_hide_handle_post_fs_data();
@@ -82,10 +87,11 @@ void on_module_mounted(void)
 void on_boot_completed(void)
 {
     pr_info("on_boot_completed!\n");
-    /* the prune bails while this is false, so raise it before the first run */
+    /* the prune bails while this is false, so raise it before the run */
     ksu_boot_completed = true;
-    track_throne(true);
-    // first run consumed, hooks may track now; release so they never see this before it
+    /* search, not prune only: the last chance to crown if nothing did earlier */
+    track_throne(false);
+    /* already true from on_post_fs_data(); kept for the late-load path */
     smp_store_release(&ksu_throne_first_done, true);
     ksu_selinux_hide_drop_backup_if_unused();
     ksu_avc_spoof_late_init();
