@@ -64,6 +64,7 @@
 #define AW_SEQUENCER_LOOP_SIZE			(4)
 #define AW_RAM_GET_F0_SEQ			(8)
 #define AW_RTP_NAME_MAX				(64)
+#define AW_RTP_STREAM_MAX			(2 * 1024 * 1024)
 #define AW_PM_QOS_VALUE_VB			(400)
 #define AW_DRV2_LVL_MAX				(0x7F)
 #define AW_VBAT_REFER				(4200)
@@ -521,6 +522,7 @@ struct aw_haptic {
 	/* AW869XX */
 	bool i2s_config;
 	bool rtp_init;
+	bool rtp_from_user;
 	bool ram_init;
 	bool dual_flag;
 
@@ -607,6 +609,14 @@ struct aw_haptic {
 struct aw_haptic_container {
 	int len;
 	uint8_t data[];
+};
+
+/* mirrors the HAL's struct effect_stream; data is a user pointer, do not pack */
+struct aw_effect_stream {
+	uint32_t effect_id;
+	uint32_t length;
+	uint32_t play_rate_hz;
+	uint64_t data;
 };
 
 struct aw_haptic_func {

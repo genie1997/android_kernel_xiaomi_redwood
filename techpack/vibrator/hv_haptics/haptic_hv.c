@@ -871,11 +871,52 @@ static void input_vib_work_routine(struct work_struct *work)
 	mutex_unlock(&aw_haptic->lock);
 }
 
+/* copy a HAL-generated waveform in the caller's context; returns the effect id */
+static int rtp_stream_upload(struct aw_haptic *aw_haptic, struct ff_effect *effect)
+{
+	struct aw_haptic_container *aw_rtp = NULL;
+	struct aw_haptic_container *old_rtp = NULL;
+	struct aw_effect_stream stream;
+
+	if (copy_from_user(&stream, effect->u.periodic.custom_data, sizeof(stream))) {
+		aw_err("copy stream descriptor from user error!!");
+		return -EFAULT;
+	}
+	if (!stream.length || stream.length > AW_RTP_STREAM_MAX) {
+		aw_err("stream length %u out of range", stream.length);
+		return -ERANGE;
+	}
+	aw_rtp = vmalloc(stream.length + sizeof(int));
+	if (!aw_rtp) {
+		aw_err("error allocating memory");
+		return -ENOMEM;
+	}
+	if (copy_from_user(aw_rtp->data, (const void *)(unsigned long)stream.data,
+			   stream.length)) {
+		aw_err("copy stream data from user error!!");
+		vfree(aw_rtp);
+		return -EFAULT;
+	}
+	aw_rtp->len = stream.length;
+	mutex_lock(&aw_haptic->rtp_lock);
+	old_rtp = aw_haptic->aw_rtp;
+	aw_haptic->aw_rtp = aw_rtp;
+	aw_haptic->rtp_init = true;
+	aw_haptic->rtp_from_user = true;
+	mutex_unlock(&aw_haptic->rtp_lock);
+	vfree(old_rtp);
+	aw_info("effect %u streamed: %d bytes at %uHz", stream.effect_id, aw_rtp->len,
+		stream.play_rate_hz);
+
+	return stream.effect_id;
+}
+
 static int input_upload_effect(struct input_dev *dev, struct ff_effect *effect,
 			       struct ff_effect *old)
 {
 	struct aw_haptic *aw_haptic = input_get_drvdata(dev);
 	short wav_id = 0;
+	int stream_id = 0;
 	s16 custom_data[3] = { 0 };
 	u16 play_rate_us = 0;
 	int ret = 0, wav_id_max = 0;
@@ -884,6 +925,7 @@ static int input_upload_effect(struct input_dev *dev, struct ff_effect *effect,
 	switch (effect->type) {
 	case FF_CONSTANT:
 		aw_haptic->activate_mode = AW_RAM_LOOP_MODE;
+		aw_haptic->rtp_from_user = false;
 		aw_haptic->duration = effect->replay.length;
 		aw_haptic->index = aw_haptic->ram.ram_num;
 		aw_dbg("waveform id = %d", aw_haptic->index);
@@ -895,7 +937,17 @@ static int input_upload_effect(struct input_dev *dev, struct ff_effect *effect,
 			goto out;
 		}
 
-		if (effect->u.periodic.custom_len == sizeof(custom_data)) {
+		aw_haptic->rtp_from_user = false;
+		if (effect->u.periodic.custom_len == sizeof(struct aw_effect_stream)) {
+			stream_id = rtp_stream_upload(aw_haptic, effect);
+			if (stream_id < 0) {
+				ret = stream_id;
+				goto out;
+			}
+			aw_haptic->activate_mode = AW_RTP_MODE;
+			aw_haptic->gain = effect->u.periodic.magnitude * 0x80 / 0x7fff;
+			__set_gain(aw_haptic, aw_haptic->gain);
+		} else if (effect->u.periodic.custom_len == sizeof(custom_data)) {
 			ret = copy_from_user(custom_data, effect->u.periodic.custom_data, sizeof(custom_data));
 			if (ret) {
 				aw_err("copy from user error %d!!", ret);
@@ -1240,6 +1292,16 @@ static void rtp_work_routine(struct work_struct *work)
 	}
 	mutex_unlock(&aw_haptic->lock);
 	mutex_lock(&aw_haptic->rtp_lock);
+	if (aw_haptic->rtp_from_user) {
+		if (!aw_haptic->aw_rtp) {
+			aw_err("no streamed rtp data");
+			mutex_unlock(&aw_haptic->rtp_lock);
+			return;
+		}
+		aw_info("rtp stream size = %dbytes", aw_haptic->aw_rtp->len);
+		mutex_unlock(&aw_haptic->rtp_lock);
+		goto rtp_ready;
+	}
 	/* fw loaded */
 	ret = request_firmware(&rtp_file, aw_rtp_name[aw_haptic->rtp_file_num], aw_haptic->dev);
 	if (ret < 0) {
@@ -1262,6 +1324,7 @@ static void rtp_work_routine(struct work_struct *work)
 	memcpy(aw_haptic->aw_rtp->data, rtp_file->data, rtp_file->size);
 	mutex_unlock(&aw_haptic->rtp_lock);
 	release_firmware(rtp_file);
+rtp_ready:
 	mutex_lock(&aw_haptic->lock);
 	aw_haptic->rtp_init = true;
 
