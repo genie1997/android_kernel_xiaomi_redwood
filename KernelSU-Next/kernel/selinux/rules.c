@@ -95,7 +95,7 @@ u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass)
     struct ebitmap_node *snode, *tnode;
     u32 i, j, bits = 0;
 
-    if (!ksu_avc_delta_ready)
+    if (!smp_load_acquire(&ksu_avc_delta_ready))
         return 0;
 
     ksu_policy_read_lock();
@@ -419,7 +419,7 @@ static void ksu_rearm_delta_tw(struct callback_head *head)
 
 void ksu_avc_delta_rearm_deferred(void)
 {
-	struct callback_head *head = kzalloc(sizeof(*head), GFP_ATOMIC);
+	struct callback_head *head = kzalloc(sizeof(*head), GFP_KERNEL);
 
 	if (!head)
 		return;

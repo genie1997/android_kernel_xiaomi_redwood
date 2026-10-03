@@ -98,7 +98,7 @@ int ksu_handle_slow_avc_audit(u32 *tsid)
 	// if tsid is su, we just replace it
 	// unsure if its enough, but this is how it is aye?
 	if (*tsid == su_sid) {
-		pr_info("avc_spoof/slow_avc_audit: replacing su_sid: %u with priv_app_sid: %u\n", su_sid, priv_app_sid);
+		pr_debug("avc_spoof/slow_avc_audit: replacing su_sid: %u with priv_app_sid: %u\n", su_sid, priv_app_sid);
 		*tsid = priv_app_sid;
 	}
 

@@ -23,11 +23,19 @@
 static struct avtab ksu_delta_avtab;
 bool ksu_avc_delta_ready = false;
 static u32 ksu_avc_genuine_ntypes;
+static bool ksu_avc_delta_stale;
 
 // alloc the table here, from sleepable context, before the caller takes the policy lock
 int ksu_avc_delta_prealloc(void)
 {
-    if (ksu_avc_delta_ready || ksu_delta_avtab.htable)
+    if (ksu_avc_delta_ready)
+        return 0;
+    // the old policy's type values are still in there, drop them or they mask a real allow
+    if (ksu_avc_delta_stale) {
+        avtab_destroy(&ksu_delta_avtab);
+        ksu_avc_delta_stale = false;
+    }
+    if (ksu_delta_avtab.htable)
         return 0;
     avtab_init(&ksu_delta_avtab);
     if (avtab_alloc(&ksu_delta_avtab, KSU_DELTA_AVTAB_RULES)) {
@@ -65,9 +73,10 @@ void ksu_avc_delta_reset(void)
 {
     if (!ksu_avc_delta_ready)
         return;
-    // leave the table allocated, a reader may be walking it under the read lock
-    ksu_avc_delta_ready = false;
-    ksu_avc_genuine_ntypes = 0;
+    // U32_MAX before the flag drops, or a reader that already passed it masks every type
+    ksu_avc_genuine_ntypes = U32_MAX;
+    ksu_avc_delta_stale = true;
+    smp_store_release(&ksu_avc_delta_ready, false);
     pr_warn("policy reloaded, avc delta masking disabled\n");
 }
 
