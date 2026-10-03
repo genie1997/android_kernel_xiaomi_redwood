@@ -63,8 +63,7 @@ static struct sidtab *ksu_get_sidtab(void)
 #endif
 }
 
-/* take the enforcement path's policy lock: these selinuxfs lookups walk the
- * live policydb/sidtab after the lock was dropped. All work here is non-sleeping. */
+/* take the enforcement path's policy lock: these selinuxfs lookups walk the live policydb/sidtab after the lock was dropped, and all work here is non-sleeping. */
 static inline void ksu_policy_read_lock(void)
 {
 #ifdef SELINUX_POLICY_INSTEAD_SELINUX_SS
@@ -83,9 +82,7 @@ static inline void ksu_policy_read_unlock(void)
 #endif
 }
 
-/* bits to subtract from a compute_av answer so the /access node returns the
- * base-policy decision for app-side callers; only our added bits are in the
- * delta. */
+/* bits to subtract from a compute_av answer so the /access node returns the base-policy decision for app-side callers; only our added bits are in the delta. */
 u32 ksu_compute_av_delta_bits(u32 ssid, u32 tsid, u16 tclass)
 {
     struct policydb *db;
@@ -128,9 +125,7 @@ out:
     return bits;
 }
 
-/* true if the SID is a type we added over the base policy (value >
- * genuine_ntypes); the userspace nodes return EINVAL for it, like the base
- * policy does for an unknown type. */
+/* true if the SID is a type we added over the base policy (value > genuine_ntypes); the userspace nodes return EINVAL for it, like the base policy does for an unknown type. */
 bool ksu_sid_is_ksu_added_type(u32 sid)
 {
     struct sidtab *sidtab;
@@ -162,13 +157,7 @@ extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
 // reset avc cache table, otherwise the new rules will not take effect if already denied
 static void reset_avc_cache()
 {
-    /*
-     * Do NOT call selinux_status_update_policyload() here: we only add allow
-     * rules to the existing policydb, so latest_granting never advances, and
-     * bumping the status page would desync it from avd.seqno on the /access
-     * path. avc_ss_reset() is a pure cache flush; enforcement is unaffected,
-     * the dropped deny is simply recomputed.
-     */
+    // do NOT call selinux_status_update_policyload() here: we only add allow rules so latest_granting never advances and that would desync avd.seqno on /access - avc_ss_reset() is a pure cache flush, the dropped deny is simply recomputed
 #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
 	LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
     avc_ss_reset(0);
@@ -203,13 +192,19 @@ static inline cpumask_t *ksu_get_current_cpumask_t() { return &current->cpus_all
 static int apply_kernelsu_rules_fn(void *ptr)
 {
 	struct policydb *db = (struct policydb *)ptr;
+    u32 base_ntypes = db->p_types.nprim;
+    struct type_datum *existing;
 
-    /* Arm the compute_av delta recorder with the base-policy type count before
-     * we mint any type or add any rule. ksu/ksu_file minted below get value >
-     * this and are handled as added types; all allow bits we add on base
-     * (<= this) keys get recorded so the userspace compute_av node can
-     * subtract them. */
-    ksu_avc_delta_init(db->p_types.nprim);
+    // arm the compute_av delta recorder with the base-policy type count before minting any type or rule, so added bits on base keys get recorded for the userspace compute_av node to subtract
+    // defend nprim as the watermark in case ksu/ksu_file are already minted in this db
+    existing = symtab_search(&db->p_types, KERNEL_SU_DOMAIN);
+    if (existing && existing->value && existing->value - 1 < base_ntypes)
+        base_ntypes = existing->value - 1;
+    existing = symtab_search(&db->p_types, KERNEL_SU_FILE);
+    if (existing && existing->value && existing->value - 1 < base_ntypes)
+        base_ntypes = existing->value - 1;
+
+    ksu_avc_delta_init(base_ntypes);
 
     ksu_type(db, KERNEL_SU_DOMAIN, "domain");
     // ksu already allows everything, so permissive and the net/bt attributes only widen policy surface
@@ -357,12 +352,7 @@ out_unlock:
 	if (!lock)
 		goto do_stop_machine;
 
-	/*
-	 * HACK: write_lock() is held with preempt enabled. DO NOT let the
-	 * task be migrated to any other CPU than the current CPU. And since
-	 * set_cpus_allowed_ptr() can sleep, use raw_smp_processor_id() to get
-	 * current CPU and bypass preemption checks.
-	 */
+	// HACK: write_lock() is held with preempt enabled, so pin to the current CPU first - set_cpus_allowed_ptr() can sleep and migration must not happen once preempt is about to be disabled
 	cpumask_copy(&old_mask, ksu_get_current_cpumask_t());
 	set_cpus_allowed_ptr(current, cpumask_of(raw_smp_processor_id()));
 
@@ -408,9 +398,7 @@ out_flush:
 #include <linux/task_work.h>
 #include <linux/slab.h>
 
-/* re-arm avc delta masking after a policy reload, off the sel_write_load path.
- * apply_kernelsu_rules() takes policy locks and pins the cpu, so it must not run
- * while fsi->mutex is held; task_work runs it on return to userspace, lock-free. */
+/* re-arm avc delta masking after a policy reload, off the sel_write_load path - apply_kernelsu_rules() takes policy locks and pins the cpu so it must not run while fsi->mutex is held, task_work runs it lock-free on return to userspace instead */
 static void ksu_rearm_delta_tw(struct callback_head *head)
 {
 	kfree(head);
@@ -906,12 +894,7 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
 	if (!lock)
 		goto do_stop_machine;
 
-	/*
-	 * HACK: write_lock() is held with preempt enabled. DO NOT let the
-	 * task be migrated to any other CPU than the current CPU. And since
-	 * set_cpus_allowed_ptr() can sleep, use raw_smp_processor_id() to get
-	 * current CPU and bypass preemption checks.
-	 */
+	// HACK: write_lock() is held with preempt enabled, so pin to the current CPU first - set_cpus_allowed_ptr() can sleep and migration must not happen once preempt is about to be disabled
 	cpumask_copy(&old_mask, ksu_get_current_cpumask_t());
 	set_cpus_allowed_ptr(current, cpumask_of(raw_smp_processor_id()));
 
@@ -945,9 +928,7 @@ do_stop_machine:
 	ret = stop_machine(handle_sepolicy_fn, (void *)&ctx, NULL);
 
 out_done:
-	/* flush the AVC unconditionally: rules that applied are live, so gating the
-	 * flush on the last command left successful rules behind stale decisions.
-	 * Still return the last error. */
+	// flush the AVC unconditionally: gating it on the last command left earlier successful rules behind stale decisions; still return the last error
 	smp_mb();
 	reset_avc_cache();
 	if (!ret)

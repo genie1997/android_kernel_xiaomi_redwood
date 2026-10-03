@@ -78,15 +78,17 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 #ifdef KSU_KPROBES_HOOK
 		ksu_clear_task_tracepoint_flag_if_needed(current);
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+		// a revoke must clear what a grant set, same as the susfs no_su flag below
+		clear_thread_flag(TIF_KSU_ALLOW_REBOOT);
+#endif
     }
 
     // Handle kernel umount
     ksu_handle_umount(old_uid, new_uid);
 
 #ifdef CONFIG_KSU_SUSFS
-    /* flag whether this uid is root-allowed (the per-app susfs layer gates on
-     * it). Thread flags survive fork/exec, so set on one branch and clear on the
-     * other, to stay in step with a grant or revoke. */
+    // flag whether this uid is root-allowed (the per-app susfs layer gates on it); thread flags survive fork/exec, so set on one branch and clear on the other to stay in step with a grant or revoke
     if (!allowed) {
         susfs_set_current_proc_no_su();
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH

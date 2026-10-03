@@ -16,10 +16,9 @@ PREFIXES='^ksu_|^__ksu_|^susfs_|^ksud|^is_ksu_|^is_manager_|^escape_to_|^setup_s
 tmp=$(mktemp)
 trap 'rm -f "$tmp" "$tmp.cnt"' EXIT
 
-# text symbols defined in the KSU archive and the two out-of-tree susfs objects
+# text symbols in the KSU archive and the out-of-tree susfs object (selinux_hide.o is already in built-in.a)
 { "$NM" --defined-only "$OUT/drivers/kernelsu/built-in.a";
-  "$NM" --defined-only "$OUT/fs/susfs.o";
-  "$NM" --defined-only "$OUT/drivers/kernelsu/feature/selinux_hide.o"; } 2>/dev/null \
+  "$NM" --defined-only "$OUT/fs/susfs.o"; } 2>/dev/null \
   | awk '$2 ~ /^[tT]$/ {print $3}' | LC_ALL=C sort -u > "$tmp"
 
 awk '{print $3}' "$MAP" | LC_ALL=C sort | uniq -c > "$tmp.cnt"

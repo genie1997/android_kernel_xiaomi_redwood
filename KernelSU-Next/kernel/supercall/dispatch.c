@@ -519,9 +519,9 @@ static int do_manage_mark(void __user *arg)
 
 	return 0;
 #else
-	// We don't care, just return -ENOTSUPP
+	// EOPNOTSUPP (95), not ENOTSUPP (524) - the latter renders to userspace as "Unknown error 524"
 	pr_warn("manage_mark: this supercalls is not implemented for manual hook.\n");
-	return -ENOTSUPP;
+	return -EOPNOTSUPP;
 #endif
 }
 
@@ -610,7 +610,6 @@ static int add_try_umount(void __user *arg)
 
     switch (cmd.mode) {
         case KSU_UMOUNT_WIPE: {
-            struct mount_entry *entry, *tmp;
             down_write(&mount_list_lock);
             list_for_each_entry_safe(entry, tmp, &mount_list, list) {
                 pr_info("wipe_umount_list: removing entry: %s\n", entry->umountable);
@@ -624,7 +623,7 @@ static int add_try_umount(void __user *arg)
         }
 
         case KSU_UMOUNT_ADD: {
-            long len = strncpy_from_user(buf, (const char __user *)cmd.arg, 256);
+            long len = strncpy_from_user(buf, (const char __user *)cmd.arg, sizeof(buf));
             if (len <= 0)
                 return -EFAULT;    
             
@@ -671,7 +670,7 @@ static int add_try_umount(void __user *arg)
 
         // this is just strcmp'd wipe anyway
         case KSU_UMOUNT_DEL: {
-            long len = strncpy_from_user(buf, (const char __user *)cmd.arg, sizeof(buf) - 1);
+            long len = strncpy_from_user(buf, (const char __user *)cmd.arg, sizeof(buf));
             if (len <= 0)
                 return -EFAULT;
             

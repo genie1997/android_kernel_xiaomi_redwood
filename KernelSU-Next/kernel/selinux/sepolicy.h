@@ -2,8 +2,16 @@
 #define __KSU_H_SEPOLICY
 
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include "ss/policydb.h"
+
+// symtab_search is introduced on 5.9.0:
+// https://elixir.bootlin.com/linux/v5.9-rc1/source/security/selinux/ss/symtab.h
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+#define symtab_search(s, name) hashtab_search((s)->table, name)
+#define symtab_insert(s, name, datum) hashtab_insert((s)->table, name, datum)
+#endif
 
 // Operation on types
 bool ksu_type(struct policydb *db, const char *name, const char *attr);

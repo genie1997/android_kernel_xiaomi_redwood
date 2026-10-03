@@ -98,11 +98,7 @@ static void ksu_avc_delta_add(u32 stype, u32 ttype, u16 tclass, u32 bits)
     avtab_insert_nonunique(&ksu_delta_avtab, &key, &d);
 }
 
-/* Is this type value one we ADDED over the base ROM policy? We keep the KSU
- * core types MINTED (root depends on them), so ksu/ksu_file plus module-minted
- * types (e.g. NeoZygisk's zygisk_file) all have value > genuine_ntypes. Used to
- * report them as absent to the app-side /context, /access and
- * /proc/self/attr/current query paths. */
+/* true if this type value was ADDED over the base ROM policy (ksu/ksu_file plus module-minted types like NeoZygisk's zygisk_file all have value > genuine_ntypes); used to report them as absent to the app-side /context, /access and /proc/self/attr/current query paths */
 bool ksu_type_value_is_added(u32 type_value)
 {
     if (!smp_load_acquire(&ksu_avc_delta_ready))
@@ -110,9 +106,7 @@ bool ksu_type_value_is_added(u32 type_value)
     return type_value > ksu_avc_genuine_ntypes;
 }
 
-/* Direct (single key) lookup. Attribute expansion is done by the caller
- * (ksu_compute_av_delta_bits in rules.c) which mirrors compute_av's walk over
- * the source/target type_attr_map. */
+/* direct (single key) lookup - attribute expansion is done by the caller, ksu_compute_av_delta_bits in rules.c, which mirrors compute_av's walk over the source/target type_attr_map */
 u32 ksu_avc_delta_lookup(u32 stype, u32 ttype, u16 tclass)
 {
     struct avtab_key key = {
@@ -200,13 +194,6 @@ static bool add_typeattribute(struct policydb *db, const char *type,
     ksu_hash_for_each(htab->htable, htab->size, cur)
 #endif
 
-// symtab_search is introduced on 5.9.0:
-// https://elixir.bootlin.com/linux/v5.9-rc1/source/security/selinux/ss/symtab.h
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
-#define symtab_search(s, name) hashtab_search((s)->table, name)
-#define symtab_insert(s, name, datum) hashtab_insert((s)->table, name, datum)
-#endif
-
 #define avtab_for_each(avtab, cur)                                             \
     ksu_hash_for_each(avtab.htable, avtab.nslot, cur);
 
@@ -236,10 +223,7 @@ static struct avtab_node *get_avtab_node(struct policydb *db,
 
     if (!node) {
         struct avtab_datum avdatum = {};
-        /*
-     * AUDITDENY, aka DONTAUDIT, are &= assigned, versus |= for
-     * others. Initialize the data accordingly.
-     */
+        // AUDITDENY (aka DONTAUDIT) is &= assigned, versus |= for others - initialize the data accordingly
         if (key->specified & AVTAB_XPERMS) {
             avdatum.u.xperms = xperms;
         } else {
@@ -461,8 +445,7 @@ static bool add_rule_raw(struct policydb *db, struct type_datum *src,
             else
                 node->datum.u.data = ~0U;
         }
-        /* record every allow bit we add over the base policy so compute_av can
-         * subtract it for app-side callers; KSU-added types handled separately */
+        // record every allow bit we add over the base policy so compute_av can subtract it for app-side callers; KSU-added types handled separately
         if (ksu_avc_delta_ready && !invert &&
             key.specified == AVTAB_ALLOWED &&
             src->value && src->value <= ksu_avc_genuine_ntypes &&
