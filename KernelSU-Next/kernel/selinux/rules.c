@@ -296,12 +296,9 @@ static int apply_kernelsu_rules_fn(void *ptr)
     ksu_allow(db, "hwservicemanager", KERNEL_SU_DOMAIN, "file", "open");
     ksu_allow(db, "hwservicemanager", KERNEL_SU_DOMAIN, "process", "getattr");
 
-    // For mounting loop devices, mirrors, tmpfs
-    ksu_allow(db, "kernel", ALL, "file", "read");
-    ksu_allow(db, "kernel", ALL, "file", "write");
-
-    // Allow all binder transactions
-    ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "binder", ALL);
+    // Allow binder call+transfer into ksu-domain services
+    ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "binder", "call");
+    ksu_allow(db, "domain", KERNEL_SU_DOMAIN, "binder", "transfer");
 
     // Allow system server kill su process
     ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "getpgid");
