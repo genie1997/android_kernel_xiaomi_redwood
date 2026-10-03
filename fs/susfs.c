@@ -26,9 +26,7 @@
 
 extern bool susfs_is_current_ksu_domain(void);
 
-/* hold i_lock: i_state gets plain RMW writes elsewhere (__mark_inode_dirty
- * etc.), so a bare set_bit() can be lost. The flag does not outlive the
- * inode; use sus_path_loop for persistence across eviction. */
+/* hold i_lock: i_state gets plain RMW writes elsewhere (__mark_inode_dirty etc.), so a bare set_bit() can be lost; the flag does not outlive the inode, use sus_path_loop for persistence across eviction */
 static inline void susfs_set_inode_flag(struct inode *inode, int bit)
 {
 	spin_lock(&inode->i_lock);
@@ -38,20 +36,19 @@ static inline void susfs_set_inode_flag(struct inode *inode, int bit)
 
 #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
 DEFINE_STATIC_KEY_TRUE(susfs_log_key);
-#define SUSFS_LOGI(fmt, ...) if (static_branch_likely(&susfs_log_key)) pr_info("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
-#define SUSFS_LOGE(fmt, ...) if (static_branch_likely(&susfs_log_key)) pr_err("susfs:[%u][%d][%s]" fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
+#define SUSFS_LOGI(fmt, ...) do { if (static_branch_likely(&susfs_log_key)) pr_info("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__); } while (0)
+#define SUSFS_LOGE(fmt, ...) do { if (static_branch_likely(&susfs_log_key)) pr_err("susfs:[%u][%d][%s]" fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__); } while (0)
 // debug level, the re-flag runs per app spawn and would flood at info
-#define SUSFS_LOGD(fmt, ...) if (static_branch_likely(&susfs_log_key)) pr_debug("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
+#define SUSFS_LOGD(fmt, ...) do { if (static_branch_likely(&susfs_log_key)) pr_debug("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__); } while (0)
 #else
-#define SUSFS_LOGI(fmt, ...)
-#define SUSFS_LOGE(fmt, ...)
-#define SUSFS_LOGD(fmt, ...)
+#define SUSFS_LOGI(fmt, ...) do { } while (0)
+#define SUSFS_LOGE(fmt, ...) do { } while (0)
+#define SUSFS_LOGD(fmt, ...) do { } while (0)
 #endif
 
 /* sus_path */
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-/* gate the per-lookup sus_path work behind a static key, off until a
- * sus_path is armed; unarmed, the call site patches out to a nop. */
+// gate the per-lookup sus_path work behind a static key, off until a sus_path is armed; unarmed, the call site patches out to a nop
 DEFINE_STATIC_KEY_FALSE(susfs_sus_path_key);
 DEFINE_STATIC_SRCU(susfs_srcu_sus_path_loop);
 static DEFINE_MUTEX(susfs_mutex_lock_sus_path);
@@ -73,7 +70,11 @@ void susfs_add_sus_path(void __user **user_info) {
 
 	info.err = kern_path(info.target_pathname, LOOKUP_FOLLOW, &path);
 	if (info.err) {
-		SUSFS_LOGE("failed opening file '%s'\n", info.target_pathname);
+		// a module adds paths for apps that may not be installed; that's not an error
+		if (info.err == -ENOENT)
+			SUSFS_LOGD("path not present, skipping: '%s'\n", info.target_pathname);
+		else
+			SUSFS_LOGE("failed opening file '%s'\n", info.target_pathname);
 		goto out_copy_to_user;
 	}
 
@@ -822,8 +823,7 @@ void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
 	char *buf;
 	unsigned seq;
 
-	/* snapshot the cmdline: seq_puts() must not run inside the retry loop or it
-	 * prints twice. */
+	// snapshot the cmdline: seq_puts() must not run inside the retry loop or it prints twice
 	buf = kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
 	if (!buf)
 		return;
@@ -1074,8 +1074,7 @@ int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buf
 				return -EFAULT;
 			}
 			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-			/* return the length actually copied: readlink() returning 0 with a filled
-			 * buffer is a value the syscall never produces, a clean tell. */
+			// return the length actually copied: readlink() returning 0 with a filled buffer is a value the syscall never produces, a clean tell
 			return strlen(entry->info.redirected_pathname);
 		}
 	}
@@ -1144,10 +1143,7 @@ int susfs_open_redirect_spoof_seq_show(struct inode *inode, int *out_mnt_id, uns
 	return -EINVAL;
 }
 
-/*
- * Allocates into *spoofed_name, which the caller prints and kfree()s.
- * *spoofed_name must be NULL on entry.
- */
+// allocates into *spoofed_name, which the caller prints and kfree()s; *spoofed_name must be NULL on entry
 int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **spoofed_name) {
 	struct st_susfs_open_redirect_hlist *entry = NULL;
 	int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
@@ -1385,8 +1381,7 @@ out_copy_to_user:
 	SUSFS_LOGI("CMD_SUSFS_SHOW_VERSION -> ret: %d\n", info.err);
 }
 
-/* left armed for the whole uptime so fs/namespace.c keeps tagging
- * ksu-domain mounts. */
+// left armed for the whole uptime so fs/namespace.c keeps tagging ksu-domain mounts
 DEFINE_STATIC_KEY_FALSE(susfs_set_sdcard_android_data_decrypted_key_false);
 
 /* susfs_init */
