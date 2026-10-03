@@ -231,6 +231,8 @@ static struct avtab_node *get_avtab_node(struct policydb *db,
         }
         /* this is used to get the node - insertion is actually unique */
         node = avtab_insert_nonunique(&db->te_avtab, key, &avdatum);
+        if (!node)
+            return NULL;
 
         int grow_size = sizeof(struct avtab_key);
         grow_size += sizeof(struct avtab_datum);
@@ -787,6 +789,7 @@ out:
 
     struct filename_trans key;
     struct filename_trans *new_key = NULL;
+    key.stype = src->value;
     key.ttype = tgt->value;
     key.tclass = cls->value;
     key.name = (char *)o;
@@ -818,7 +821,7 @@ out:
         }
     }
 
-    return ebitmap_set_bit(&db->filename_trans_ttypes, src->value - 1, 1) == 0;
+    return ebitmap_set_bit(&db->filename_trans_ttypes, tgt->value, 1) == 0;
 
 free_name_pre57:
     kfree(new_key->name);

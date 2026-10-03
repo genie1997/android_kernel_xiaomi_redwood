@@ -615,7 +615,7 @@ void ksu_load_allow_list()
 	allow_list_loaded = (ret == 0);
 	if (!allow_list_loaded)
 		pr_warn("allowlist truncated, prune disabled for this boot\n");
-	if (version < KSU_APP_PROFILE_VER)
+	if (allow_list_loaded && version < KSU_APP_PROFILE_VER)
 		ksu_persistent_allow_list();
 	return;
 
