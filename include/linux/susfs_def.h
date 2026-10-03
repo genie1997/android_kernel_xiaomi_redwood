@@ -189,7 +189,7 @@ extern bool susfs_is_current_ksu_domain(void);
 static inline bool susfs_is_sus_mnt_hidden_from_current(void)
 {
 	return static_branch_unlikely(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled) &&
-		!susfs_is_current_ksu_domain();
+		susfs_is_current_proc_no_su_app();
 }
 #endif
 
