@@ -187,7 +187,11 @@ static __always_inline bool check_v2_signature(char *path,
 		}
 
 		pos = file_size - search_size;
-		kernel_read(fp, eocd_buffer, search_size, &pos);
+		if (kernel_read(fp, eocd_buffer, search_size, &pos) != search_size) {
+			pr_err("error: cannot read eocd window\n");
+			kvfree(eocd_buffer);
+			goto clean;
+		}
 
 		if (search_size >= eocd_min_size) {
 			long j;
