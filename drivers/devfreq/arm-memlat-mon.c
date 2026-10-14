@@ -106,8 +106,7 @@ struct memlat_mon {
  * @thread:			The kthread used for handling updates.
  * @waitq:			Waitqueue to wake the kthread.
  * @kick:			Atomic flag to signal the kthread.
- * @timer:			High-resolution timer for periodic kicks.
- * @update_ms:			The frequency with which @timer triggers.
+ * @update_ms:			The sampling period, in ms.
  * @num_mons:		The number of @mons for this cpu_grp.
  * @num_inited_mons:	The number of @mons who have probed.
  * @num_active_mons:	The number of @mons currently running
@@ -116,6 +115,7 @@ struct memlat_mon {
  *				the different voters who share this cpu_grp.
  * @mons_lock:		A lock used to protect the @mons.
  * @init_mons_lock:	A lock used to protect the @mons in probe routine.
+ * @next_kick, @polling:	When the next sample is due, and whether the ticks are armed.
  */
 struct memlat_cpu_grp {
 	cpumask_t		cpus;
@@ -127,7 +127,8 @@ struct memlat_cpu_grp {
 	struct task_struct	*thread;
 	wait_queue_head_t	waitq;
 	atomic_t		kick;
-	struct hrtimer		timer;
+	unsigned long		next_kick;
+	bool			polling;
 	unsigned int		update_ms;
 
 	unsigned int		num_mons;
@@ -152,6 +153,12 @@ struct memlat_mon_spec {
 #define to_mon(hwmon) container_of(hwmon, struct memlat_mon, hw)
 
 static DEFINE_PER_CPU(struct memlat_cpu_grp *, per_cpu_grp);
+
+struct memlat_tick {
+	struct timer_list	timer;
+	struct memlat_cpu_grp	*cpu_grp;
+};
+static DEFINE_PER_CPU(struct memlat_tick, memlat_ticks);
 static DEFINE_MUTEX(notify_lock);
 static int hp_idle_register_cnt;
 static DEFINE_PER_CPU(bool, cpu_is_idle);
@@ -332,15 +339,54 @@ static void free_common_evs(struct memlat_cpu_grp *cpu_grp)
 	}
 }
 
-static enum hrtimer_restart memlat_hrtimer_handler(struct hrtimer *timer)
+/* Pinned and deferrable: fires only on a CPU that is already awake */
+static void memlat_tick_fn(struct timer_list *t)
 {
-	struct memlat_cpu_grp *cpu_grp =
-		container_of(timer, struct memlat_cpu_grp, timer);
+	struct memlat_tick *mt = from_timer(mt, t, timer);
+	struct memlat_cpu_grp *cpu_grp = mt->cpu_grp;
+	unsigned long period, next;
 
-	if (!atomic_xchg(&cpu_grp->kick, 1))
+	if (!READ_ONCE(cpu_grp->polling))
+		return;
+
+	period = msecs_to_jiffies(READ_ONCE(cpu_grp->update_ms));
+	next = READ_ONCE(cpu_grp->next_kick);
+	if (time_after_eq(jiffies, next) &&
+	    cmpxchg(&cpu_grp->next_kick, next, jiffies + period) == next &&
+	    !atomic_xchg(&cpu_grp->kick, 1))
 		wake_up(&cpu_grp->waitq);
 
-	return HRTIMER_NORESTART;
+	mod_timer(t, jiffies + period);
+}
+
+static void memlat_arm_tick(struct memlat_cpu_grp *cpu_grp, unsigned int cpu)
+{
+	struct timer_list *t = &per_cpu(memlat_ticks, cpu).timer;
+
+	if (try_to_del_timer_sync(t) < 0)
+		return;
+	t->expires = jiffies + msecs_to_jiffies(cpu_grp->update_ms);
+	add_timer_on(t, cpu);
+}
+
+static void memlat_start_polling(struct memlat_cpu_grp *cpu_grp)
+{
+	unsigned int cpu;
+
+	WRITE_ONCE(cpu_grp->next_kick,
+		   jiffies + msecs_to_jiffies(cpu_grp->update_ms));
+	WRITE_ONCE(cpu_grp->polling, true);
+	for_each_cpu_and(cpu, &cpu_grp->cpus, cpu_online_mask)
+		memlat_arm_tick(cpu_grp, cpu);
+}
+
+static void memlat_stop_polling(struct memlat_cpu_grp *cpu_grp)
+{
+	unsigned int cpu;
+
+	WRITE_ONCE(cpu_grp->polling, false);
+	for_each_cpu(cpu, &cpu_grp->cpus)
+		del_timer_sync(&per_cpu(memlat_ticks, cpu).timer);
 }
 
 static int memlat_thread(void *data)
@@ -381,11 +427,6 @@ static int memlat_thread(void *data)
 						err);
 				mutex_unlock(&df->lock);
 			}
-
-			if (cpu_grp->update_ms != UINT_MAX)
-				hrtimer_start(&cpu_grp->timer,
-					      ms_to_ktime(cpu_grp->update_ms),
-					      HRTIMER_MODE_REL);
 		}
 
 		mutex_unlock(&cpu_grp->mons_lock);
@@ -501,6 +542,8 @@ static int memlat_event_hotplug_coming_up(unsigned int cpu)
 	if (cpu_grp->num_active_mons) {
 		ret = memlat_hp_restart_events(cpu, true);
 		per_cpu(cpu_is_hp, cpu) = false;
+		if (cpu_grp->polling)
+			memlat_arm_tick(cpu_grp, cpu);
 	}
 	mutex_unlock(&cpu_grp->mons_lock);
 
@@ -639,17 +682,15 @@ static int start_hwmon(struct memlat_hwmon *hw)
 	spin_unlock_irqrestore(&cpu_grp->mon_active_lock, flags);
 
 
-	if (should_init_cpu_grp)
-		hrtimer_start(&cpu_grp->timer,
-			      ms_to_ktime(cpu_grp->update_ms),
-			      HRTIMER_MODE_REL);
+	if (should_init_cpu_grp && cpu_grp->update_ms != UINT_MAX)
+		memlat_start_polling(cpu_grp);
 
 unlock_out:
 	if (ret < 0 && should_init_cpu_grp) {
 		struct task_struct *thread = cpu_grp->thread;
 
 		cpu_grp->thread = NULL;
-		hrtimer_cancel(&cpu_grp->timer);
+		memlat_stop_polling(cpu_grp);
 		free_common_evs(cpu_grp);
 
 		mutex_lock(&notify_lock);
@@ -701,7 +742,7 @@ static void stop_hwmon(struct memlat_hwmon *hw)
 	if (!cpu_grp->num_active_mons) {
 		struct task_struct *thread;
 
-		hrtimer_cancel(&cpu_grp->timer);
+		memlat_stop_polling(cpu_grp);
 		thread = cpu_grp->thread;
 		cpu_grp->thread = NULL;
 		free_common_evs(cpu_grp);
@@ -750,11 +791,9 @@ static void set_update_ms(struct memlat_cpu_grp *cpu_grp)
 	if (new_update_ms != cpu_grp->update_ms) {
 		cpu_grp->update_ms = new_update_ms;
 		if (new_update_ms == UINT_MAX)
-			hrtimer_cancel(&cpu_grp->timer);
-		else
-			hrtimer_start(&cpu_grp->timer,
-				      ms_to_ktime(new_update_ms),
-				      HRTIMER_MODE_REL);
+			memlat_stop_polling(cpu_grp);
+		else if (!cpu_grp->polling)
+			memlat_start_polling(cpu_grp);
 	}
 }
 
@@ -885,8 +924,13 @@ static int memlat_cpu_grp_probe(struct platform_device *pdev)
 	mutex_init(&cpu_grp->mons_lock);
 	mutex_init(&cpu_grp->init_mons_lock);
 	spin_lock_init(&cpu_grp->mon_active_lock);
-	hrtimer_init(&cpu_grp->timer, CLOCK_BOOTTIME, HRTIMER_MODE_REL);
-	cpu_grp->timer.function = memlat_hrtimer_handler;
+	for_each_cpu(cpu, &cpu_grp->cpus) {
+		struct memlat_tick *mt = &per_cpu(memlat_ticks, cpu);
+
+		mt->cpu_grp = cpu_grp;
+		timer_setup(&mt->timer, memlat_tick_fn,
+			    TIMER_DEFERRABLE | TIMER_PINNED);
+	}
 	init_waitqueue_head(&cpu_grp->waitq);
 	atomic_set(&cpu_grp->kick, 0);
 	cpu_grp->update_ms = DEFAULT_UPDATE_MS;
