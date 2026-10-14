@@ -905,7 +905,7 @@ static int rtp_stream_upload(struct aw_haptic *aw_haptic, struct ff_effect *effe
 	aw_haptic->rtp_from_user = true;
 	mutex_unlock(&aw_haptic->rtp_lock);
 	vfree(old_rtp);
-	aw_info("effect %u streamed: %d bytes at %uHz", stream.effect_id, aw_rtp->len,
+	aw_dbg("effect %u streamed: %d bytes at %uHz", stream.effect_id, aw_rtp->len,
 		stream.play_rate_hz);
 
 	return stream.effect_id;
@@ -1061,7 +1061,7 @@ static void input_set_gain(struct input_dev *dev, uint16_t gain)
 		gain = 0x7fff;
 	aw_haptic->gain = gain * 0x80 / 0x7fff;
 	queue_work(aw_haptic->work_queue, &aw_haptic->gain_work);
-	aw_info("aw_haptic->gain = 0x%02x", aw_haptic->gain);
+	aw_dbg("aw_haptic->gain = 0x%02x", aw_haptic->gain);
 }
 
 static int input_framework_init(struct aw_haptic *aw_haptic)
@@ -1235,7 +1235,7 @@ static int rtp_play(struct aw_haptic *aw_haptic)
 			if (aw_haptic->rtp_cnt != aw_rtp->len)
 				aw_err("rtp play suspend!");
 			else
-				aw_info("rtp update complete!");
+				aw_dbg("rtp update complete!");
 			aw_haptic->rtp_cnt = 0;
 			aw_haptic->rtp_init = false;
 			break;
@@ -1255,7 +1255,7 @@ static int wait_enter_rtp_mode(struct aw_haptic *aw_haptic)
 		ret = aw_haptic->func->judge_rtp_going(aw_haptic);
 		if (ret) {
 			rtp_work_flag = true;
-			aw_info("RTP_GO!");
+			aw_dbg("RTP_GO!");
 			break;
 		}
 		cnt--;
@@ -1298,7 +1298,7 @@ static void rtp_work_routine(struct work_struct *work)
 			mutex_unlock(&aw_haptic->rtp_lock);
 			return;
 		}
-		aw_info("rtp stream size = %dbytes", aw_haptic->aw_rtp->len);
+		aw_dbg("rtp stream size = %dbytes", aw_haptic->aw_rtp->len);
 		mutex_unlock(&aw_haptic->rtp_lock);
 		goto rtp_ready;
 	}

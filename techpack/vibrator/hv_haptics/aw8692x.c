@@ -735,7 +735,7 @@ static int aw8692x_judge_rtp_going(struct aw_haptic *aw_haptic)
 	glb_state = aw8692x_get_glb_state(aw_haptic);
 	if (glb_state == AW8692X_BIT_GLBRD5_STATE_RTP_GO) {
 		rtp_state = 1;  /*is going on */
-		aw_info("rtp_routine_on");
+		aw_dbg("rtp_routine_on");
 	}
 
 	return rtp_state;

@@ -213,7 +213,7 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 
 	ret = snd_pcm_hw_constraint_integer(runtime,
 					    SNDRV_PCM_HW_PARAM_PERIODS);
-	if (ret)
+	if (ret < 0)
 		pr_info("snd_pcm_hw_constraint_integer failed\n");
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -221,7 +221,7 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 			SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
 			SIO_PLAYBACK_MIN_BYTES,
 			SIO_PLAYBACK_MAX_BYTES);
-		if (ret) {
+		if (ret < 0) {
 			pr_info("%s: P buffer bytes minmax constraint ret %d\n",
 			       __func__, ret);
 		}
@@ -230,7 +230,7 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 			   SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
 			   SIO_CAPTURE_MIN_BYTES,
 			   SIO_CAPTURE_MAX_BYTES);
-		if (ret) {
+		if (ret < 0) {
 			pr_info("%s: C buffer bytes minmax constraint ret %d\n",
 			       __func__, ret);
 		}
