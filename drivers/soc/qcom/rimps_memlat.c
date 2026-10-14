@@ -817,7 +817,7 @@ static int memlat_event_cpu_hp_init(void)
 {
 	int ret = 0;
 
-	ret = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
+	ret = cpuhp_setup_state_nocalls_cpuslocked(CPUHP_AP_ONLINE_DYN,
 				"MEMLAT_EVENT",
 				memlat_event_hotplug_coming_up,
 				memlat_event_hotplug_going_down);
@@ -1307,6 +1307,7 @@ static int memlat_cpu_grp_probe(struct platform_device *pdev)
 		get_online_cpus();
 		ret = memlat_event_cpu_hp_init();
 		if (ret < 0) {
+			put_online_cpus();
 			dev_err(dev, "failed to register to hp\n");
 			return ret;
 		}
