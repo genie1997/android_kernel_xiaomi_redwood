@@ -964,6 +964,7 @@ void pm_system_irq_wakeup(unsigned int irq_number)
 		struct irq_desc *desc;
 		const char *name = "null";
 
+		log_irq_wakeup_reason(irq_number);
 		if (msm_show_resume_irq_mask) {
 			desc = irq_to_desc(irq_number);
 			if (desc == NULL)
@@ -971,7 +972,6 @@ void pm_system_irq_wakeup(unsigned int irq_number)
 			else if (desc->action && desc->action->name)
 				name = desc->action->name;
 
-			log_irq_wakeup_reason(irq_number);
 			pr_warn("%s: %d triggered %s\n", __func__,
 					irq_number, name);
 
