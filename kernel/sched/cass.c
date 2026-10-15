@@ -96,7 +96,8 @@ bool cass_prime_cpu(const struct cass_cpu_cand *c)
 static __always_inline
 bool cass_cpu_better(const struct cass_cpu_cand *a,
 		     const struct cass_cpu_cand *b, unsigned long p_util,
-		     int this_cpu, int prev_cpu, int prev_llc_id, bool sync)
+		     int this_cpu, int prev_cpu, int prev_llc_id, bool sync,
+		     bool rt)
 {
 #define cass_cmp(a, b) ({ res = (a) - (b); })
 #define cass_eq(a, b) ({ res = (a) == (b); })
@@ -119,6 +120,12 @@ bool cass_cpu_better(const struct cass_cpu_cand *a,
 
 	/* Prefer the CPU that isn't the single fastest one in the system */
 	if (cass_cmp(cass_prime_cpu(b), cass_prime_cpu(a)))
+		goto done;
+
+	/* Prefer the smaller idle CPU for a CFS task that fits it, sync wakes aside */
+	if (!rt && a->exit_lat && b->exit_lat && fits_capacity(p_util, a->cpu) &&
+	    !(sync && (a->cpu == this_cpu || b->cpu == this_cpu)) &&
+	    cass_cmp(b->cap_orig, a->cap_orig))
 		goto done;
 
 	/* Prefer the CPU with lower relative utilization */
@@ -308,7 +315,7 @@ static int cass_best_cpu(struct task_struct *p, int prev_cpu, bool sync, bool rt
 		 */
 		if (best == curr ||
 		    cass_cpu_better(curr, best, p_util, this_cpu, prev_cpu,
-				    prev_llc_id, sync)) {
+				    prev_llc_id, sync, rt)) {
 			best = curr;
 			cidx ^= 1;
 		}
