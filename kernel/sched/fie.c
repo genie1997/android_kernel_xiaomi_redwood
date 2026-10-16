@@ -147,6 +147,7 @@ struct throt_data {
 	unsigned int nr_domain_cpus;
 	u64 last_htd_cntpct;
 	int cpu;
+	bool hw_limits_irq;
 	struct fie_rate_info rate;
 };
 
@@ -176,7 +177,8 @@ static __always_inline bool cpu_supports_amu_const(int cpu)
 	return per_cpu(cpu_has_amu_const, cpu);
 }
 
-void fie_init_cpu_domain(const struct cpumask *cpus, unsigned int max_freq)
+void fie_init_cpu_domain(const struct cpumask *cpus, unsigned int max_freq,
+			 bool hw_limits_irq)
 {
 	struct throt_data *t;
 	int cpu;
@@ -193,6 +195,7 @@ void fie_init_cpu_domain(const struct cpumask *cpus, unsigned int max_freq)
 	cpumask_copy(&t->cpus, cpus);
 	t->cpu = cpumask_first(cpus);
 	t->nr_domain_cpus = cpumask_weight(cpus);
+	t->hw_limits_irq = hw_limits_irq;
 
 	for_each_cpu(cpu, cpus)
 		per_cpu(domain_throt_data, cpu) = t;
@@ -549,7 +552,8 @@ static void update_cpu_hw_throttle(void)
 	struct fie_rate_info rate_info;
 	u64 freq, max_freq, ns;
 
-	if (!t)
+	/* A domain whose limits hardware raises an IRQ reports its own throttling */
+	if (!t || t->hw_limits_irq)
 		goto reset_stats;
 
 	/*

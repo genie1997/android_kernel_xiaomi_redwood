@@ -379,7 +379,7 @@ static int qcom_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
 		    policy->freq_table[i].frequency > max_freq)
 			max_freq = policy->freq_table[i].frequency;
 	}
-	fie_init_cpu_domain(policy->cpus, max_freq);
+	fie_init_cpu_domain(policy->cpus, max_freq, c->dcvsh_irq > 0);
 
 	policy->driver_data = c->base;
 	policy->fast_switch_possible = true;

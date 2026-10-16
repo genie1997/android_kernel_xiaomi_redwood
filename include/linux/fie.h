@@ -17,7 +17,8 @@ struct fie_rate_info {
 };
 
 void fie_update_rq_clock(struct rq *rq);
-void fie_init_cpu_domain(const struct cpumask *cpus, unsigned int max_freq);
+void fie_init_cpu_domain(const struct cpumask *cpus, unsigned int max_freq,
+			 bool hw_limits_irq);
 void fie_cpufreq_pressure(int cpu, unsigned int capped_freq);
 void fie_rate_set(int cpu, unsigned int freq);
 void fie_tick_entry(void);
