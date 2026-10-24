@@ -20,11 +20,17 @@ static u32 cached_system_server_sid __read_mostly = 0;
 static u32 cached_servicemanager_sid __read_mostly = 0;
 static u32 cached_hwservicemanager_sid __read_mostly = 0;
 static u32 cached_vndservicemanager_sid __read_mostly = 0;
+/* keystore2 checks its clients' key permissions over /sys/fs/selinux/access;
+ * masked, a ksu-domain client (e.g. a module daemon) gets EINVAL and every
+ * key operation it makes is denied. It only answers the client, never leaks
+ * the raw decision to apps. */
+static u32 cached_keystore_sid __read_mostly = 0;
 
 #define SYSTEM_SERVER_CONTEXT "u:r:system_server:s0"
 #define SERVICEMANAGER_CONTEXT "u:r:servicemanager:s0"
 #define HWSERVICEMANAGER_CONTEXT "u:r:hwservicemanager:s0"
 #define VNDSERVICEMANAGER_CONTEXT "u:r:vndservicemanager:s0"
+#define KEYSTORE_CONTEXT "u:r:keystore:s0"
 u32 ksu_file_sid __read_mostly = 0;
 
 static int transive_to_domain(const char *domain, struct cred *cred, bool clear_exec_sid)
@@ -227,6 +233,7 @@ void cache_sid(void)
             { SERVICEMANAGER_CONTEXT, &cached_servicemanager_sid },
             { HWSERVICEMANAGER_CONTEXT, &cached_hwservicemanager_sid },
             { VNDSERVICEMANAGER_CONTEXT, &cached_vndservicemanager_sid },
+            { KEYSTORE_CONTEXT, &cached_keystore_sid },
         };
         int i;
         for (i = 0; i < ARRAY_SIZE(smgr); i++) {
@@ -243,7 +250,8 @@ void cache_sid(void)
 }
 
 /* whether this caller should see the base-policy answer: yes for everyone
- * except kernel/init/system_server/zygote/ksu and the servicemanager family. */
+ * except kernel/init/system_server/zygote/ksu, the servicemanager family and
+ * keystore. */
 bool ksu_mask_compute_av_for_caller(void)
 {
     u32 sid = current_sid();
@@ -263,6 +271,8 @@ bool ksu_mask_compute_av_for_caller(void)
     if (cached_hwservicemanager_sid && sid == cached_hwservicemanager_sid)
         return false;
     if (cached_vndservicemanager_sid && sid == cached_vndservicemanager_sid)
+        return false;
+    if (cached_keystore_sid && sid == cached_keystore_sid)
         return false;
     return true;
 }
